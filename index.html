@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!--HEAD-START-->
+<title>Fugue Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<!--HEAD-END-->
+<link rel="stylesheet" href="/src/app/styles.css">
+</head>
+<body>
+<!--BODY-START-->
+<header class="top">
+  <div class="brand">
+    <h1>Fugue Lab</h1>
+    <p>Write a subject. Get an exposition.</p>
+  </div>
+  <div class="transport">
+    <button class="btn" id="playSubject" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>Subject</button>
+    <button class="btn primary" id="playFugue" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg><span id="playFugueLabel">Play fugue</span></button>
+    <button class="btn" id="stop" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9v9h-9z"/></svg>Stop</button>
+    <label class="tempo" for="bpm">♩ =
+      <input id="bpm" type="range" min="40" max="140" step="2" value="76">
+      <output id="bpmOut">76</output>
+    </label>
+    <select id="instrument" class="compact" aria-label="Instrument">
+      <option value="harpsichord">Harpsichord</option>
+      <option value="organ">Organ</option>
+      <option value="soft">Soft synth</option>
+    </select>
+    <button class="btn" id="export" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 1.5h2v7l2.5-2.5 1.4 1.4L8 12.3 3.1 7.4l1.4-1.4L7 8.5zM2 13h12v1.5H2z"/></svg>Export MIDI</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="rail" aria-label="Settings">
+    <section class="group">
+      <h2>Subject</h2>
+      <label class="field"><span>Start from</span>
+        <select id="example"></select>
+      </label>
+      <div class="row2">
+        <label class="field"><span>Length</span>
+          <select id="bars"><option value="1">1 bar</option><option value="2">2 bars</option><option value="3">3 bars</option><option value="4">4 bars</option></select>
+        </label>
+        <label class="field"><span>Meter</span>
+          <select id="meter"><option value="4">4/4</option><option value="3">3/4</option></select>
+        </label>
+      </div>
+      <div class="field"><span class="field-label" id="lenLabel">New note length</span>
+        <div class="seg" role="radiogroup" aria-labelledby="lenLabel">
+          <label><input type="radio" name="len" value="1" id="len1"><span class="mono">1/16</span></label>
+          <label><input type="radio" name="len" value="2" id="len2"><span class="mono">1/8</span></label>
+          <label><input type="radio" name="len" value="4" id="len4"><span class="mono">1/4</span></label>
+          <label><input type="radio" name="len" value="8" id="len8"><span class="mono">1/2</span></label>
+        </div>
+      </div>
+      <button class="btn" id="clear" type="button">Clear subject</button>
+    </section>
+
+    <section class="group">
+      <h2>Answer</h2>
+      <label class="field"><span>Key</span><select id="key"></select></label>
+      <div class="field"><span class="field-label" id="atLabel">Type</span>
+        <div class="seg" role="radiogroup" aria-labelledby="atLabel">
+          <label><input type="radio" name="answerType" value="tonal" id="atTonal"><span>Tonal</span></label>
+          <label><input type="radio" name="answerType" value="real" id="atReal"><span>Real</span></label>
+        </div>
+      </div>
+      <label class="field"><span>Tonal head</span><select id="mutation"></select></label>
+      <label class="field"><span>Register</span>
+        <select id="answerInterval"><option value="fifthUp">A 5th above</option><option value="fourthDown">A 4th below</option></select>
+      </label>
+      <p class="hint">In the head, 1 is answered by 5 and 5 by 1. After it, the answer is an exact transposition into the dominant.</p>
+    </section>
+
+    <section class="group">
+      <h2>Texture</h2>
+      <div class="field"><span class="field-label" id="vLabel">Voices</span>
+        <div class="seg" role="radiogroup" aria-labelledby="vLabel">
+          <label><input type="radio" name="voices" value="2" id="v2"><span>2</span></label>
+          <label><input type="radio" name="voices" value="3" id="v3"><span>3</span></label>
+          <label><input type="radio" name="voices" value="4" id="v4"><span>4</span></label>
+        </div>
+      </div>
+      <label class="field"><span>Entry order</span><select id="order"></select></label>
+      <label class="field"><span>Codetta after the answer</span>
+        <select id="codetta"><option value="0">None</option><option value="1">1 bar</option><option value="2">2 bars</option></select>
+      </label>
+      <label class="check"><input type="checkbox" id="cs">Countersubject</label>
+      <label class="check"><input type="checkbox" id="cadence">Closing cadence</label>
+      <label class="check"><input type="checkbox" id="picardy">Picardy third in minor</label>
+    </section>
+
+    <section class="group">
+      <h2>Variation</h2>
+      <div class="row2">
+        <label class="field"><span>Seed</span><input id="seed" type="number" min="1" step="1" inputmode="numeric"></label>
+        <div class="field"><span class="field-label">&nbsp;</span><button class="btn" id="reroll" type="button">New variation</button></div>
+      </div>
+      <p class="hint">The same subject, settings and seed always give the same fugue.</p>
+    </section>
+  </aside>
+
+  <div class="work">
+    <section class="card" aria-labelledby="subjectTitle">
+      <div class="card-head">
+        <h2 id="subjectTitle">Subject</h2>
+        <p>Click to add · drag to move · drag the right edge to resize · double-click to delete · <kbd>↑</kbd><kbd>↓</kbd> transpose</p>
+      </div>
+      <div class="chips" id="analysis"></div>
+      <div class="roll-wrap"><div id="roll"></div></div>
+      <div class="legend">
+        <span class="key"><i class="k-subject"></i>Subject</span>
+        <span class="key"><i class="k-head"></i>Tonal head (dashed line marks the mutation point)</span>
+        <span class="key"><i class="k-ghost"></i>Answer</span>
+        <span class="key"><i class="k-tonic"></i>Tonic rows</span>
+        <label class="check"><input type="checkbox" id="ghost">Show answer</label>
+      </div>
+      <ul class="warnings" id="warnings" hidden></ul>
+    </section>
+
+    <section class="card" aria-labelledby="fugueTitle">
+      <div class="card-head">
+        <h2 id="fugueTitle">Exposition</h2>
+        <p>Click the roll to play from that point · <kbd>Space</kbd> plays or stops</p>
+      </div>
+      <div id="fugueEmpty" class="empty" hidden>Add at least two notes to the subject to hear the exposition.</div>
+      <div id="fugueBody">
+        <div class="chips" id="report"></div>
+        <div class="voices">
+          <span id="voices" style="display:contents"></span>
+          <span class="roles"><span><i></i>Subject / answer</span><span><i class="r-cs"></i>Countersubject</span><span><i class="r-free"></i>Free</span></span>
+        </div>
+        <div id="fugue"><div class="tip" id="tip" hidden></div></div>
+        <p class="foot">Each entry states the subject or the answer; the voice that just finished takes the countersubject, and earlier voices continue in free counterpoint.</p>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+<!--BODY-END-->
+<script type="module" src="/src/app/main.ts"></script>
+</body>
+</html>
