@@ -4,6 +4,7 @@
 import { Note, TPB, noteEnd } from './model';
 import { Key, chordsOf, mod12, usablePcs } from './theory';
 import { Rng, pickWeighted } from './rng';
+import { Chord } from './harmony';
 
 export interface Slot {
   start: number;
@@ -32,6 +33,12 @@ export interface LineSpec {
   targetPitch?: number;
   /** Restrict pitch classes (absolute), e.g. a final tonic chord. */
   allowedPcs?: number[];
+  /**
+   * Harmonic skeleton: the chord the whole texture is aiming at on each beat.
+   * On the beat the line is pulled towards chord tones, and towards the ones
+   * the other voices have not supplied yet.
+   */
+  chordAt?: (tick: number) => Chord | undefined;
   beatsPerBar: number;
   beam?: number;
   noise?: number;
@@ -140,9 +147,23 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         let lowest = p;
         let count = 1;
         for (const v of g.pitch) if (v[ti] >= 0) { lowest = Math.min(lowest, v[ti]); count++; }
-        if (count === 1) continue;
         const strong = t % TPB === 0;
         const downbeat = t % bar === 0;
+        const chord = strong ? spec.chordAt?.(t) : undefined;
+        if (chord) {
+          const pc = mod12(p);
+          const idx = chord.pcs.indexOf(pc);
+          if (idx < 0) cost += t === s.start ? (downbeat ? 9 : 7) : 5;
+          else {
+            let doubled = false;
+            for (const v of g.pitch) if (v[ti] >= 0 && mod12(v[ti]) === pc) doubled = true;
+            if (!doubled) cost -= idx === 1 ? 2.2 : idx === 3 ? 0.4 : 1.4;
+            else if (idx === 3 || pc === mod12(chord.key.tonic + 11)) cost += 4; // doubled seventh / leading note
+            else if (idx === 1) cost += 1;
+            if (idx === 2 && count > 1 && p === lowest) cost += 2.5; // six-four
+          }
+        }
+        if (count === 1) continue;
         for (let vi = 0; vi < g.pitch.length; vi++) {
           const o = g.pitch[vi][ti];
           if (o < 0) continue;
@@ -173,7 +194,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           if (r === 'below' && p >= o) cost += 24;
           if (r && Math.abs(p - o) > (spec.invertible ? 16 : 19)) cost += 2;
         }
-        if (strong && count >= 3) {
+        if (strong && count >= 3 && !chord) {
           const pcs = new Set<number>([mod12(p)]);
           for (const v of g.pitch) if (v[ti] >= 0) pcs.add(mod12(v[ti]));
           const fits = chords.some((c) => [...pcs].every((x) => c.includes(x)));

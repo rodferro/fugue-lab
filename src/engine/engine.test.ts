@@ -4,9 +4,10 @@ import { EXAMPLES } from '../app/examples';
 import { detectKey } from './analyze';
 import { makeAnswer } from './answer';
 import { generateFugue } from './fugue';
+import { planHarmony } from './harmony';
 import { voiceLeadingReport } from './report';
-import { noteEnd } from './model';
-import { keyName } from './theory';
+import { TPB, noteEnd } from './model';
+import { keyName, mod12 } from './theory';
 
 const ex = (id: string) => EXAMPLES.find((e) => e.id === id)!.notes;
 
@@ -52,4 +53,41 @@ test('generated parts avoid parallel fifths and octaves', () => {
       assert.ok(issues.length <= 1, `${e.id} ${voices}v: ${issues.length} parallels`);
     }
   }
+});
+
+test('harmonic skeleton explains the fixed notes', () => {
+  const C = { tonic: 0, mode: 'major' as const };
+  // Bar of C–E–G against a held C, then B–D against G: I for a bar, then V.
+  const upper = [[64, 0, 8], [67, 8, 8], [62, 16, 16]].map(([pitch, start, dur]) => ({ pitch, start, dur }));
+  const lower = [[48, 0, 16], [43, 16, 16]].map(([pitch, start, dur]) => ({ pitch, start, dur }));
+  const sk = planHarmony([upper, lower], 0, 32, () => C, 4);
+  assert.equal(sk.length, 8);
+  assert.deepEqual(sk.map((b) => b.chord.label), ['I', 'I', 'I', 'I', 'V', 'V', 'V', 'V']);
+});
+
+test('4-voice free parts follow the skeleton and stay clean', () => {
+  let onBeat = 0, inChord = 0, diss = 0, cross = 0, runs = 0;
+  for (const e of EXAMPLES) {
+    for (let seed = 1; seed <= 6; seed++) {
+      const f = generateFugue(e.notes, { voices: 4, seed });
+      const expEnd = f.sections[0].end;
+      assert.equal(f.harmony.length, expEnd / TPB, 'one chord per beat of the exposition');
+      for (const b of f.harmony) {
+        for (const line of f.notes) {
+          const n = line.find((x) => x.start <= b.start && noteEnd(x) > b.start);
+          if (!n || (n.role !== 'free' && n.role !== 'link')) continue;
+          onBeat++;
+          if (b.chord.pcs.includes(mod12(n.pitch))) inChord++;
+        }
+      }
+      const issues = voiceLeadingReport(f.notes);
+      diss += issues.filter((i) => i.kind === 'strongDissonance').length;
+      cross += issues.filter((i) => i.kind === 'crossing').length;
+      runs++;
+    }
+  }
+  assert.ok(inChord / onBeat > 0.75, `only ${inChord}/${onBeat} free on-beat notes are chord tones`);
+  // Before the skeleton these averaged about 2.7 and 0.7 per fugue.
+  assert.ok(diss / runs < 2, `${(diss / runs).toFixed(2)} strong-beat dissonances per fugue`);
+  assert.ok(cross / runs < 0.5, `${(cross / runs).toFixed(2)} crossings per fugue`);
 });

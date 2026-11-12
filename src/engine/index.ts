@@ -2,6 +2,7 @@ export * from './model';
 export * from './theory';
 export * from './analyze';
 export * from './answer';
+export * from './harmony';
 export * from './counterpoint';
 export * from './fugue';
 export * from './midi';

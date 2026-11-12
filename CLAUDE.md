@@ -23,6 +23,7 @@ src/engine/            pure TS, no DOM — keep it that way (reusable in a worke
   theory.ts            Key, scales, ScalePitch (degree/oct/acc), diatonicShift, chordsOf, names
   analyze.ts           detectKey (KS profiles + first/last-note bias), autoMutation, warnings
   answer.ts            makeAnswer(subject, key, 'real'|'tonal', mutation)
+  harmony.ts           planHarmony: chord per beat from the fixed voices (DP), chordLookup
   counterpoint.ts      generateLine (beam search) + complementaryRhythm
   fugue.ts             generateFugue(subject, settings) → FugueResult (exposition planner/renderer)
   report.ts            voiceLeadingReport: parallels, strong-beat dissonances, crossings
@@ -49,14 +50,24 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
   tones, triad fit on strong beats. `contexts` holds *alternative* textures the
   line must satisfy at once (the countersubject uses subject + answer);
   `invertible` makes 4ths/5ths count as dissonant.
+- 4 voices only: `planHarmony` picks a chord per beat for each entry from the
+  fixed voices (entry + countersubject) before the free voices are written;
+  `generateLine` gets it as `chordAt` (on-beat pull to chord tones, bonus for
+  tones nobody has yet). Free voices are then written most-constrained first
+  (nearest a fixed voice) and all but the last are rewritten once they can hear
+  the others. The skeleton is returned as `FugueResult.harmony`; the UI does
+  not draw it yet.
 - Countersubject is generated once against the subject (time 0, tonic), then
   transposed (+7 for answer entries) and octave-placed above/below the entry.
 
 ## Known weaknesses (good first tasks)
 
-1. 4-voice texture: free voices are written one at a time, so later voices get
-   boxed in (more strong-beat dissonances/crossings). Fix: harmonic skeleton
-   first (chord per beat), or a joint beam search over the free voices.
+1. 4-voice texture, last entry: the remaining strong-beat dissonances are
+   mostly free voice vs countersubject and free voice vs entry (about 1.2 per
+   fugue, down from 2.7 before the harmonic skeleton). The skeleton is planned
+   from fixed voices only and ignores register/inversion; a joint beam search
+   over the free voices, or letting the countersubject shift octave per beat
+   group, would be the next step. 2- and 3-voice textures do not use the skeleton.
 2. No suspensions: a strong-beat dissonance prepared and resolved down by step
    is penalized like any other. Add a suspension rule in `harmonic()`.
 3. Tonal answer only handles a ^1/^5 head. Subjects that modulate to V need a

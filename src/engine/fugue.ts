@@ -6,6 +6,7 @@ import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
 import { Relation, Slot, complementaryRhythm, generateLine } from './counterpoint';
 import { Rng, makeRng } from './rng';
+import { Chord, SkeletonBeat, chordLookup, planHarmony } from './harmony';
 
 export interface FugueSettings {
   voices: 2 | 3 | 4;
@@ -73,6 +74,8 @@ export interface FugueResult {
   countersubject: Note[] | null;
   length: number;
   beatsPerBar: number;
+  /** Chord per beat that the free voices were written to (4 voices only; otherwise empty). */
+  harmony: SkeletonBeat[];
 }
 
 function outOfRange(notes: Note[], range: [number, number]): number {
@@ -213,6 +216,18 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     return x?.pitch;
   };
 
+  // Harmonic skeleton, planned per entry from the fixed voices before any free
+  // voice is written. With two or more free voices this keeps the later ones
+  // from being boxed in by whatever the earlier ones happened to choose.
+  const useSkeleton = n >= 4;
+  const harmony: SkeletonBeat[] = [];
+  let chordAt: ((tick: number) => Chord | undefined) | undefined;
+  const planSkeleton = (a: number, b: number, keyAt: (t: number) => Key, closeOn: Key) => {
+    if (!useSkeleton || b <= a) return;
+    harmony.push(...planHarmony(fixed, a, b, keyAt, s.beatsPerBar, { before: harmony[harmony.length - 1]?.chord, closeOn }));
+    chordAt = chordLookup(harmony);
+  };
+
   const writeLine = (v: number, a: number, b: number, keyAt: (t: number) => Key, role: Role, slots?: Slot[], allowedPcs?: number[]) => {
     if (b <= a) return;
     const others: Note[][] = [];
@@ -233,6 +248,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         startPitch: lastPitchBefore(v, a),
         targetPitch: nextFixedPitch(v, b),
         allowedPcs,
+        chordAt: allowedPcs ? undefined : chordAt,
         beatsPerBar: s.beatsPerBar,
       },
       rng,
@@ -248,7 +264,23 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     const keyAt = (tt: number) => (tt < subEnd ? e.key : nextKey);
     const csVoice = s.countersubject && k > 0 ? order[k - 1] : -1;
     const free = order.slice(0, k).filter((v) => v !== csVoice).sort((a, b) => a - b);
+    planSkeleton(e.start, e.end, keyAt, nextKey);
+    if (useSkeleton) {
+      // Most constrained first: a free voice next to (or between) fixed voices
+      // has the least room, so it chooses before the others close in on it.
+      const fixedVoices = [e.voice, csVoice].filter((v) => v >= 0);
+      const room = (v: number) => Math.min(...fixedVoices.map((f) => Math.abs(f - v)));
+      free.sort((x, y) => room(x) - room(y) || x - y);
+    }
     for (const v of free) writeLine(v, e.start, e.end, keyAt, 'free');
+    if (useSkeleton && free.length > 1) {
+      // The first free voice was written without knowing the others; redo it now that it can hear them.
+      for (const v of free.slice(0, -1)) {
+        const old = notes[v].filter((x) => x.role === 'free' && x.start >= e.start && x.start < e.end);
+        notes[v] = notes[v].filter((x) => !old.includes(x));
+        writeLine(v, e.start, e.end, keyAt, 'free', old.map(({ start, dur }) => ({ start, dur })));
+      }
+    }
     const linkers = [e.voice, csVoice].filter((v) => v >= 0).sort((a, b) => a - b);
     for (const v of linkers) writeLine(v, subEnd, e.end, () => nextKey, 'link');
   }
@@ -279,5 +311,6 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     countersubject: cs0,
     length,
     beatsPerBar: s.beatsPerBar,
+    harmony,
   };
 }
