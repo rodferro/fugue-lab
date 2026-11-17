@@ -4,6 +4,14 @@ A web app that turns a user-written fugue subject into a fugue. The current
 prototype generates the **exposition** (plus an optional codetta and closing
 cadence). A published single-file build of it exists as a claude.ai artifact.
 
+## Research
+
+Fugue Lab is also the base for a possible paper on subject-conditioned fugue
+expositions. Read `docs/RESEARCH.md` (plan, metrics, milestones) and
+`docs/decisions.md` (decisions with reasons; add an entry rather than
+reversing one silently) before research-related work. Tick off items in
+RESEARCH.md's "Engine prerequisites" when they land.
+
 ## Stack
 
 - TypeScript, Vite, no UI framework (plain DOM + Canvas 2D). No runtime dependencies.

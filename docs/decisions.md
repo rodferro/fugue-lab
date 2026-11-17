@@ -1,0 +1,42 @@
+# Decision log
+
+One entry per decision, newest last. Change a decision by adding a new entry
+that supersedes it, not by editing the old one.
+
+## 2026-11-16
+
+- **No new version of the app; research goes in a separate Python repo (name TBD).**
+  The app needs to stay working while experimental models are not yet good;
+  research code (data, training, eval) changes constantly and lives in Python.
+- **The engine stays in TypeScript.** It runs in the browser with no server and
+  powers the single-file build. Porting would duplicate ~1,400 tested lines and
+  split the baseline from the app. The engine is reached from Python through
+  `fugue-cli` (JSON / JSONL over a subprocess).
+- **Hybrid scoring will use ONNX.** Beam search calls the scorer per candidate,
+  too often for a subprocess bridge. Train in Python, export to ONNX, run it in
+  TS (`onnxruntime-node` / `onnxruntime-web`). Port only `generateLine` to
+  Python, and only if profiling shows the bridge is the bottleneck.
+- **Suspension detection in the report is opt-in** (`suspensions: true`). The
+  default stays unchanged, so the generator's quality tests keep counting every
+  strong-beat dissonance; the research metric turns it on.
+- **Paper scope: expositions only.** Episodes, middle entries and stretto come later.
+- **Beat-based tokens for the learned model.** This addresses the rhythm weakness
+  LakhNES reported.
+- **CLI uses a minimal `src/cli/node.d.ts` instead of `@types/node`.** This keeps
+  the repo free of new dependencies (`tsconfig` sets `"types": []`). Delete the
+  shim if `@types/node` is ever added.
+- **Workflow: code in Claude Code, research and writing in chat.** Shared state
+  lives in the repo (`CLAUDE.md`, `docs/RESEARCH.md`, this file). Commit before
+  switching between them.
+
+- **The 4-voice quality test reports with `suspensions: true`** (refines the
+  opt-in entry above; the report default stays off). The generator now writes
+  prepared suspensions on purpose, so counting them as strong-beat dissonances
+  would fail the test for the intended behaviour. The test counts unprepared
+  dissonances instead (bound tightened from < 2 to < 1.5 per fugue), and a new
+  test requires every generated suspension to resolve to a consonance, at
+  0.1–0.8 per bar. The parallel-fifths/octaves guard is unchanged.
+- **Suspension reward is hand-set** (`SUSP_REWARD = 1`, `SUSP_AGAINST_REWARD = 0.5`
+  in `counterpoint.ts`). Larger rewards flood the texture (1.5 gave about 0.7
+  suspensions per bar in 4 voices); calibrate against Bach's rate once the
+  reference numbers exist (milestone 3).
