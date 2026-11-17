@@ -40,7 +40,7 @@ export function writeMidi(tracks: MidiTrack[], bpm: number, beatsPerBar = 4): Ui
     0, 0xff, 0x58, 4, beatsPerBar, 2, 24, 8,
     0, 0xff, 0x2f, 0,
   ];
-  const out = [...chunk('MThd', [0, 1, ...[0, tracks.length + 1].flatMap((x) => [(x >> 8) & 255, x & 255]), (PPQ >> 8) & 255, PPQ & 255]), ...chunk('MTrk', conductor)];
+  const out = [...chunk('MThd', [0, 1, (tracks.length + 1) >> 8, (tracks.length + 1) & 255, (PPQ >> 8) & 255, PPQ & 255]), ...chunk('MTrk', conductor)];
   tracks.forEach((tr, i) => {
     const ch = (tr.channel ?? i) & 15;
     const events: { t: number; bytes: number[]; order: number }[] = [];

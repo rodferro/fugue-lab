@@ -21,7 +21,16 @@ function run(cmd: (req: unknown) => CommandResult, text: string): unknown {
   return res.json;
 }
 
-function main(argv: string[]): number {
+// One synchronous read of a pipe can fail with EAGAIN or stop short on large
+// inputs, so stdin is read as a stream.
+async function readStdin(): Promise<string> {
+  process.stdin.setEncoding('utf8');
+  let text = '';
+  for await (const chunk of process.stdin) text += chunk;
+  return text;
+}
+
+async function main(argv: string[]): Promise<number> {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
   const [name, file] = argv.filter((a) => !a.startsWith('--'));
   const cmd = name ? COMMANDS[name] : undefined;
@@ -29,7 +38,7 @@ function main(argv: string[]): number {
     process.stderr.write(`${USAGE}\n`);
     return 2;
   }
-  const input = readFileSync(!file || file === '-' ? process.stdin.fd : file, 'utf8');
+  const input = !file || file === '-' ? await readStdin() : readFileSync(file, 'utf8');
   if (flags.has('--jsonl')) {
     let failed = 0;
     for (const line of input.split('\n')) {
@@ -52,4 +61,6 @@ function main(argv: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2));
+main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});

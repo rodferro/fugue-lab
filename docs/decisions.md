@@ -40,3 +40,31 @@ that supersedes it, not by editing the old one.
   in `counterpoint.ts`). Larger rewards flood the texture (1.5 gave about 0.7
   suspensions per bar in 4 voices); calibrate against Bach's rate once the
   reference numbers exist (milestone 3).
+
+## 2026-11-17
+
+- **Research repo is `fugue-research`** (sibling of fugue-lab). Its data
+  pipeline is stdlib-only Python (its own MIDI reader), so it runs anywhere
+  without setup; training dependencies come later as an optional extra.
+- **Ingest grid: 24 ticks per quarter.** That is exact for 32nds, 16th-note
+  triplets and compound meters; quantization error is recorded per piece.
+- **Reference rates check strong points on the meter's beat** (half notes in
+  2/2, dotted quarters in 12/8), with `--beat quarter` to match the engine's
+  every-quarter check. Rates are reported per bar and per bar per voice pair,
+  since pieces with more voices have more pairs that can go wrong.
+- **MIDI export header fixed.** `writeMidi` wrote an 8-byte header that read as
+  0 tracks at 4 ticks per quarter, so standard readers rejected exported files
+  or played them about 120× too slowly. Found by the fugue-research round-trip
+  test; covered now by an engine test.
+- **MCMA is read as MusicXML and fugues are picked by metadata title.** MCMA
+  ships `.mxl`, not MIDI. Its editors renumber `<voice>` inside a part, so
+  voices are chosen per measure (keep the only voice; where two sound at once,
+  keep the part's dominant one).
+- **First reference rates (fugue-research `results/2026-11-17-first-reference-rates.md`).**
+  The 4-voice suspension rate already matches Bach's openings (0.53 per bar),
+  so `SUSP_REWARD = 1` stays for now. 3 voices are low (0.27 vs 0.40).
+- **"Strong-beat dissonance" is not yet an error metric.** Bach scores 5–10×
+  the engine because the report counts chordal sevenths, accented passing
+  tones and appoggiaturas. Classify strong-beat dissonances in the report
+  before using it as the paper's violation rate, and don't tune the engine
+  toward fewer of them until then.

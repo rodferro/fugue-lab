@@ -5,6 +5,7 @@ import { detectKey } from './analyze';
 import { makeAnswer } from './answer';
 import { generateFugue } from './fugue';
 import { planHarmony } from './harmony';
+import { writeMidi } from './midi';
 import { voiceLeadingReport } from './report';
 import { TPB, noteEnd } from './model';
 import { keyName, mod12 } from './theory';
@@ -121,4 +122,18 @@ test('generated suspensions resolve down by step to a consonance', () => {
   }
   // They are written on purpose now, but should not be everywhere.
   assert.ok(count / bars > 0.1 && count / bars < 0.8, `${(count / bars).toFixed(2)} suspensions per bar`);
+});
+
+test('MIDI header: format 1, one track per voice plus the conductor, 480 ticks per quarter', () => {
+  const f = generateFugue(ex('d-minor'), { voices: 3, seed: 1 });
+  const bytes = writeMidi(f.voices.map((v, i) => ({ name: v.name, notes: f.notes[i], channel: i })), 80, 4);
+  // "MThd", length 6, format 1, 4 tracks, division 480
+  assert.deepEqual([...bytes.slice(0, 14)], [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 4, 0x01, 0xe0]);
+  let tracks = 0;
+  for (let pos = 14; pos + 8 <= bytes.length; ) {
+    assert.equal(String.fromCharCode(...bytes.slice(pos, pos + 4)), 'MTrk');
+    pos += 8 + ((bytes[pos + 4] << 24) | (bytes[pos + 5] << 16) | (bytes[pos + 6] << 8) | bytes[pos + 7]);
+    tracks++;
+  }
+  assert.equal(tracks, 4);
 });

@@ -3,12 +3,12 @@
 declare const process: {
   argv: string[];
   exitCode: number | undefined;
-  stdin: { fd: number };
+  stdin: { setEncoding(encoding: 'utf8'): void; [Symbol.asyncIterator](): AsyncIterator<string> };
   stdout: { write(s: string): boolean };
   stderr: { write(s: string): boolean };
 };
 
 declare module 'node:fs' {
-  export function readFileSync(path: string | number, encoding: 'utf8'): string;
+  export function readFileSync(path: string, encoding: 'utf8'): string;
   export function writeFileSync(path: string, data: string | Uint8Array): void;
 }

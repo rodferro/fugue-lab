@@ -108,8 +108,8 @@ each pre-training stage on/off; beat-based vs. time-shift tokens.
 ## Milestones
 
 1. Literature review: confirm the gap.
-2. Python research repo: MCMA ingest, voice-separated JSON export, entry-finder/labeler.
-3. Bach reference rates: run `fugue-cli report` over the Bach corpus.
+2. Python research repo: MCMA ingest and voice-separated JSON export (done: `../fugue-research`), entry-finder/labeler (open).
+3. Bach reference rates: run `fugue-cli report` over the Bach corpus (first pass done 2026-11-17; next: classify strong-beat dissonances, then exposition-only rates once the entry-finder exists).
 4. Baseline numbers: current engine across subjects and seeds.
 5. Learned model, then hybrid scoring via ONNX.
 6. Listening test, then write-up.
