@@ -47,6 +47,22 @@ export interface LineSpec {
 const DISSONANT = [false, true, true, false, false, false, true, false, false, false, true, true];
 const IMPERFECT = [false, false, false, true, true, false, false, false, true, true, false, false];
 
+/**
+ * Suspensions. A strong-beat dissonance is a suspension when the dissonant
+ * note was already sounding (held over or re-struck) and consonant just
+ * before, so the dissonance comes from the other voice moving, and the
+ * suspended note then moves directly a step down within two beats. This is
+ * the definition voiceLeadingReport uses with `suspensions: true`.
+ * Our own suspensions are rewarded instead of penalized; the waived penalty
+ * is carried on the beam node and charged if the next note does not resolve.
+ * When a fixed voice is the one suspended, its resolution is known: the line
+ * moving into the dissonance is not penalized, but the waived penalty is
+ * charged if the line is dissonant with the resolution note when it arrives.
+ */
+const SUSP_WINDOW = 2 * TPB;
+const SUSP_REWARD = 1;
+const SUSP_AGAINST_REWARD = 0.5;
+
 interface Grid {
   t0: number;
   pitch: Int16Array[];
@@ -82,6 +98,16 @@ interface BeamNode {
   runLen: number;
   /** Direction a dissonant passing note must keep moving in (0 = any step), or null. */
   pending: number | null;
+  /** Penalty waived for a suspension in the last note, charged unless the next note resolves it. */
+  suspDebt: number;
+  /** A fixed voice's suspension the line moved against: where it resolves, and the waived penalty. */
+  fixedSusp: FixedSusp | null;
+}
+
+interface FixedSusp {
+  tick: number;
+  pitch: number;
+  debt: number;
 }
 
 const INTERVAL_COST = [3, 0, 0, 1, 1.2, 2, 18, 3, 5, 5.5, 18, 20, 4];
@@ -135,11 +161,17 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     }),
   );
 
-  function harmonic(p: number, prevP: number | null, si: number, key: Key): { cost: number; weakDiss: boolean } {
+  function harmonic(p: number, prevP: number | null, si: number, key: Key): { cost: number; weakDiss: boolean; startDiss: boolean; suspDebt: number; fixedSusp: FixedSusp | null } {
     const s = slots[si];
     let cost = 0;
     let weakDiss = false;
+    let suspDebt = 0;
+    let startDiss = false;
+    let fixedSusp: FixedSusp | null = null;
     const chords = chordsOf(key);
+    const end = s.start + s.dur;
+    const heldIn = si > 0 && noteEnd(slots[si - 1]) === s.start && prevP !== null;
+    const canResolve = si + 1 < slots.length && slots[si + 1].start === end;
     for (let gi = 0; gi < grids.length; gi++) {
       const g = grids[gi];
       for (const t of slices[si][gi]) {
@@ -150,10 +182,12 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         const strong = t % TPB === 0;
         const downbeat = t % bar === 0;
         const chord = strong ? spec.chordAt?.(t) : undefined;
+        let outOfChord = 0;
+        let suspended = false;
         if (chord) {
           const pc = mod12(p);
           const idx = chord.pcs.indexOf(pc);
-          if (idx < 0) cost += t === s.start ? (downbeat ? 9 : 7) : 5;
+          if (idx < 0) outOfChord = t === s.start ? (downbeat ? 9 : 7) : 5;
           else {
             let doubled = false;
             for (const v of g.pitch) if (v[ti] >= 0 && mod12(v[ti]) === pc) doubled = true;
@@ -163,16 +197,39 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
             if (idx === 2 && count > 1 && p === lowest) cost += 2.5; // six-four
           }
         }
-        if (count === 1) continue;
+        if (count === 1) {
+          cost += outOfChord;
+          continue;
+        }
         for (let vi = 0; vi < g.pitch.length; vi++) {
           const o = g.pitch[vi][ti];
           if (o < 0) continue;
           const ic = Math.abs(p - o) % 12;
           const diss = DISSONANT[ic] || (ic === 5 && Math.min(p, o) === lowest) || (!!spec.invertible && (ic === 5 || ic === 7));
+          // Our note suspended against this voice: same pitch at t-1, consonant
+          // with the voice there, resolvable by the next slot within the window.
+          // Fourths only as 4–3 (line above); fifths are never suspensions.
+          const oPrev = ti > 0 ? g.pitch[vi][ti - 1] : -1;
+          const suspendable = strong && diss && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev) &&
+            canResolve && end <= t + SUSP_WINDOW;
           if (t === s.start) {
             if (diss) {
-              if (strong) cost += downbeat ? 30 : 22;
-              else weakDiss = true;
+              startDiss = true;
+              if (strong) {
+                const base = downbeat ? 30 : 22;
+                if (suspendable && heldIn && prevP === p) {
+                  // re-struck suspension
+                  cost -= SUSP_REWARD;
+                  suspDebt += base + SUSP_REWARD;
+                  suspended = true;
+                } else {
+                  const res: { tick: number; pitch: number } | null = heldIn && !fixedSusp ? fixedResolution(g, vi, ti, prevP!) : null;
+                  if (res) {
+                    cost -= SUSP_AGAINST_REWARD;
+                    fixedSusp = { ...res, debt: base + SUSP_AGAINST_REWARD };
+                  } else cost += base;
+                }
+              } else weakDiss = true;
             } else if (p === o) cost += 5;
             else if (IMPERFECT[ic]) cost -= 0.6;
             else cost += 0.8;
@@ -187,14 +244,20 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
               }
             }
           } else if (diss) {
-            cost += strong ? 16 : 2.5;
+            if (suspendable) {
+              // held-over suspension
+              cost -= SUSP_REWARD;
+              suspDebt += 16 + SUSP_REWARD;
+              suspended = true;
+            } else cost += strong ? 16 : 2.5;
           }
           const r = g.rel[vi];
           if (r === 'above' && p <= o) cost += 24;
           if (r === 'below' && p >= o) cost += 24;
           if (r && Math.abs(p - o) > (spec.invertible ? 16 : 19)) cost += 2;
         }
-        if (strong && count >= 3 && !chord) {
+        if (!suspended) cost += outOfChord;
+        if (strong && count >= 3 && !chord && !suspended) {
           const pcs = new Set<number>([mod12(p)]);
           for (const v of g.pitch) if (v[ti] >= 0) pcs.add(mod12(v[ti]));
           const fits = chords.some((c) => [...pcs].every((x) => c.includes(x)));
@@ -202,14 +265,37 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         }
       }
     }
-    return { cost, weakDiss };
+    return { cost, weakDiss, startDiss, suspDebt, fixedSusp };
   }
 
-  const root: BeamNode = { p: spec.startPitch ?? -1, prev: null, cost: 0, lastInt: 0, runDir: 0, runLen: 0, pending: null };
+  /**
+   * Is fixed voice `vi` suspended against the line at slice `ti`? It holds its
+   * pitch from ti-1, the line's previous note was consonant with it, and it
+   * moves directly a step down within the window. Returns the resolution.
+   */
+  function fixedResolution(g: Grid, vi: number, ti: number, prevP: number): { tick: number; pitch: number } | null {
+    const v = g.pitch[vi];
+    const on = g.onset[vi];
+    const o = v[ti];
+    if (ti < 1 || v[ti - 1] !== o || dissAt(prevP, o)) return null;
+    let u = ti + 1;
+    while (u < v.length && v[u] === o && !on[u]) u++;
+    if (u >= v.length || u - ti > SUSP_WINDOW) return null;
+    const fall = o - v[u];
+    return fall === 1 || fall === 2 ? { tick: u + g.t0, pitch: v[u] } : null;
+  }
+
+  function dissAt(a: number, b: number): boolean {
+    const ic = Math.abs(a - b) % 12;
+    return DISSONANT[ic] || (!!spec.invertible && (ic === 5 || ic === 7));
+  }
+
+  const root: BeamNode = { p: spec.startPitch ?? -1, prev: null, cost: 0, lastInt: 0, runDir: 0, runLen: 0, pending: null, suspDebt: 0, fixedSusp: null };
   let states: BeamNode[] = [root];
 
   for (let si = 0; si < slots.length; si++) {
     const key = keyAt(slots[si].start);
+    const slotEnd = noteEnd(slots[si]);
     const allowed = spec.allowedPcs ?? usablePcs(key);
     const next = new Map<string, BeamNode>();
     for (const st of states) {
@@ -230,6 +316,22 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         }
         const h = harmonic(p, prevP, si, key);
         cost += h.cost;
+        if (st.suspDebt > 0 && prevP !== null) {
+          // Resolved: a step down, consonant with everything where it lands.
+          const fall = prevP - p;
+          if ((fall !== 1 && fall !== 2) || h.startDiss) cost += st.suspDebt;
+        }
+        // Fixed voices' suspensions: charge the waived penalty if this note is
+        // dissonant with the resolution; carry it on if it resolves later.
+        let fixedSusp: FixedSusp | null = null;
+        for (const fs of [st.fixedSusp, h.fixedSusp]) {
+          if (!fs) continue;
+          if (fs.tick >= slotEnd) {
+            if (fixedSusp) cost += fs.debt; // only one is tracked; don't let the other go unchecked
+            else fixedSusp = fs;
+          }
+          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch)) cost += fs.debt;
+        }
         let pending: number | null = null;
         if (h.weakDiss) {
           if (step) pending = Math.sign(p - prevP!);
@@ -248,8 +350,10 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           runDir: dir,
           runLen: dir !== 0 && dir === st.runDir ? st.runLen + 1 : 1,
           pending,
+          suspDebt: h.suspDebt,
+          fixedSusp,
         };
-        const sig = `${p}|${pending}|${Math.sign(d)}|${Math.abs(d) >= 5 ? 1 : 0}`;
+        const sig = `${p}|${pending}|${Math.sign(d)}|${Math.abs(d) >= 5 ? 1 : 0}|${h.suspDebt > 0 ? 1 : 0}|${fixedSusp ? fixedSusp.tick : ''}`;
         const old = next.get(sig);
         if (!old || old.cost > cost) next.set(sig, node);
       }
@@ -262,6 +366,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
   for (const st of states) {
     let c = st.cost;
     if (st.pending !== null) c += 16;
+    c += st.suspDebt;
     if (spec.targetPitch !== undefined) {
       const a = Math.abs(spec.targetPitch - st.p);
       c += a > 12 ? 8 : a === 6 || a === 10 || a === 11 ? 6 : a > 7 ? 4 : a > 4 ? 1.5 : 0;

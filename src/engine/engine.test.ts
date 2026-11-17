@@ -80,14 +80,45 @@ test('4-voice free parts follow the skeleton and stay clean', () => {
           if (b.chord.pcs.includes(mod12(n.pitch))) inChord++;
         }
       }
-      const issues = voiceLeadingReport(f.notes);
+      // Suspensions are written on purpose since they are rewarded in
+      // harmonic(); count only the unprepared or unresolved ones here.
+      const issues = voiceLeadingReport(f.notes, { suspensions: true });
       diss += issues.filter((i) => i.kind === 'strongDissonance').length;
       cross += issues.filter((i) => i.kind === 'crossing').length;
       runs++;
     }
   }
   assert.ok(inChord / onBeat > 0.75, `only ${inChord}/${onBeat} free on-beat notes are chord tones`);
-  // Before the skeleton these averaged about 2.7 and 0.7 per fugue.
-  assert.ok(diss / runs < 2, `${(diss / runs).toFixed(2)} strong-beat dissonances per fugue`);
+  // Before the skeleton these averaged about 2.7 and 0.7 per fugue (with
+  // suspensions counted as dissonances); with the skeleton about 1.2.
+  assert.ok(diss / runs < 1.5, `${(diss / runs).toFixed(2)} unprepared strong-beat dissonances per fugue`);
   assert.ok(cross / runs < 0.5, `${(cross / runs).toFixed(2)} crossings per fugue`);
+});
+
+test('generated suspensions resolve down by step to a consonance', () => {
+  const DISS = new Set([1, 2, 6, 10, 11]);
+  const at = (line: { pitch: number; start: number; dur: number }[], t: number) => line.find((n) => n.start <= t && noteEnd(n) > t);
+  let count = 0, bars = 0;
+  for (const e of EXAMPLES) {
+    for (const voices of [3, 4] as const) {
+      for (let seed = 1; seed <= 4; seed++) {
+        const f = generateFugue(e.notes, { voices, seed });
+        bars += f.length / (TPB * f.beatsPerBar);
+        for (const i of voiceLeadingReport(f.notes, { suspensions: true })) {
+          if (i.kind !== 'suspension') continue;
+          count++;
+          // The suspended voice is the one that holds its pitch into the beat.
+          const [a, b] = i.voices.map((v) => f.notes[v]);
+          const held = at(a, i.tick - 1)?.pitch === at(a, i.tick)!.pitch && at(b, i.tick - 1)?.pitch !== at(b, i.tick)!.pitch;
+          const [sus, other] = held ? [a, b] : [b, a];
+          const n = at(sus, i.tick)!;
+          const r = sus.find((x) => x.start === noteEnd(n))!;
+          const o = at(other, r.start);
+          assert.ok(!o || !DISS.has(Math.abs(r.pitch - o.pitch) % 12), `${e.id} ${voices}v seed ${seed}: suspension at ${i.tick} resolves to a dissonance`);
+        }
+      }
+    }
+  }
+  // They are written on purpose now, but should not be everywhere.
+  assert.ok(count / bars > 0.1 && count / bars < 0.8, `${(count / bars).toFixed(2)} suspensions per bar`);
 });

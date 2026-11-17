@@ -52,7 +52,11 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 - `generateLine` scoring (in `counterpoint.ts`) is where musical quality lives:
   strong-beat dissonance 22–30, unresolved weak dissonance 15–18, parallel
   perfects 45, crossings 24, melodic costs per interval, minor-key tendency
-  tones, triad fit on strong beats. `contexts` holds *alternative* textures the
+  tones, triad fit on strong beats. Prepared suspensions that resolve down by
+  step (same definition as the report's `suspensions: true`) get a small reward
+  instead of the strong-beat penalty; the waived penalty rides on the beam node
+  (`suspDebt`, `fixedSusp`) and is charged if the resolution is not a step down
+  to a consonance. `contexts` holds *alternative* textures the
   line must satisfy at once (the countersubject uses subject + answer);
   `invertible` makes 4ths/5ths count as dissonant.
 - 4 voices only: `planHarmony` picks a chord per beat for each entry from the
@@ -68,13 +72,15 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 ## Known weaknesses (good first tasks)
 
 1. 4-voice texture, last entry: the remaining strong-beat dissonances are
-   mostly free voice vs countersubject and free voice vs entry (about 1.2 per
-   fugue, down from 2.7 before the harmonic skeleton). The skeleton is planned
+   mostly free voice vs countersubject and free voice vs entry (about 0.95
+   unprepared ones per fugue with suspensions told apart; 2.7 before the harmonic
+   skeleton, 1.2 before suspensions). The skeleton is planned
    from fixed voices only and ignores register/inversion; a joint beam search
    over the free voices, or letting the countersubject shift octave per beat
    group, would be the next step. 2- and 3-voice textures do not use the skeleton.
-2. No suspensions: a strong-beat dissonance prepared and resolved down by step
-   is penalized like any other. Add a suspension rule in `harmonic()`.
+2. ~~No suspensions~~ (done: rewarded in `harmonic()`). Still open: retardations
+   (upward resolution) and ornamented resolutions are penalized like any other
+   dissonance, and `SUSP_REWARD` is hand-set, not calibrated against Bach's rate.
 3. Tonal answer only handles a ^1/^5 head. Subjects that modulate to V need a
    tail mutation too; let the user drag the mutation marker in the roll.
 4. The countersubject can clash with the tonal head when the head is long.
@@ -101,8 +107,10 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 `beatsPerBar` and `strongEvery` so imported music (e.g. voice-separated Bach) can be
 measured at its own resolution. `suspensions: true` reports a prepared dissonance that
 resolves down by step (directly, within two beats) as `suspension` instead of
-`strongDissonance`. It is off by default so the generator's quality tests keep counting
-every strong-beat dissonance; use it when comparing against real music. Not recognized
+`strongDissonance`. It is off by default. The generator now writes suspensions on
+purpose, so the 4-voice quality test reports with `suspensions: true` and counts only
+unprepared strong-beat dissonances, and a separate test checks that every suspension
+resolves to a consonance at a plausible density. Use it when comparing against real music. Not recognized
 yet: retardations (upward resolution), ornamented or delayed resolutions, and 4ths
 against the bass (P4 is treated as consonant everywhere).
 
