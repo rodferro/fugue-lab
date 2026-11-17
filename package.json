@@ -10,7 +10,8 @@
     "build:single": "node scripts/build-single.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -p .",
-    "test": "tsx --test src/engine/*.test.ts"
+    "test": "tsx --test src/engine/*.test.ts src/cli/*.test.ts",
+    "cli": "tsx src/cli/fugue-cli.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

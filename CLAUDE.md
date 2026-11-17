@@ -26,9 +26,14 @@ src/engine/            pure TS, no DOM — keep it that way (reusable in a worke
   harmony.ts           planHarmony: chord per beat from the fixed voices (DP), chordLookup
   counterpoint.ts      generateLine (beam search) + complementaryRhythm
   fugue.ts             generateFugue(subject, settings) → FugueResult (exposition planner/renderer)
-  report.ts            voiceLeadingReport: parallels, strong-beat dissonances, crossings
+  report.ts            voiceLeadingReport(voices, opts): parallels, strong-beat dissonances,
+                       suspensions (opt-in), crossings; summarizeReport → counts per bar
   midi.ts              SMF type-1 writer
   engine.test.ts
+src/cli/               fugue-cli: the engine as JSON in / JSON out (not part of build-single)
+  commands.ts          generate / report / answer handlers, pure and tested (cli.test.ts)
+  fugue-cli.ts         argv + stdin/file I/O, --jsonl batch mode, --pretty
+  node.d.ts            minimal Node typings (tsconfig has "types": []); delete if @types/node is added
 src/app/               UI
   main.ts              state, form wiring, playback, export, localStorage
   pianoRoll.ts         subject editor (monophonic; edited note wins overlaps)
@@ -88,6 +93,18 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
       final entry over a tonic pedal.
 - [ ] Later: entry-order/mutation editing directly on the roll, SoundFont
       instruments, score view (VexFlow or MusicXML preview), undo/redo.
+
+## CLI and the report as a metric
+
+`npm run cli -- <generate|report|answer> [file|-] [--jsonl]`. Notes are integer-tick
+`{pitch, start, dur}`; `generate` is on the 16th grid, `report` takes `ticksPerBeat`,
+`beatsPerBar` and `strongEvery` so imported music (e.g. voice-separated Bach) can be
+measured at its own resolution. `suspensions: true` reports a prepared dissonance that
+resolves down by step (directly, within two beats) as `suspension` instead of
+`strongDissonance`. It is off by default so the generator's quality tests keep counting
+every strong-beat dissonance; use it when comparing against real music. Not recognized
+yet: retardations (upward resolution), ornamented or delayed resolutions, and 4ths
+against the bass (P4 is treated as consonant everywhere).
 
 ## Checks before committing
 

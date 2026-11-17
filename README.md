@@ -10,6 +10,7 @@ npm run dev        # Vite dev server
 npm test           # engine tests (node:test via tsx)
 npm run typecheck
 npm run build:single   # dist/fugue-lab.html, one self-contained page
+npm run cli -- generate subject.json --pretty   # engine from the command line (see CLAUDE.md)
 ```
 
 ## How it works
@@ -18,6 +19,6 @@ npm run build:single   # dist/fugue-lab.html, one self-contained page
 2. **Answer**: real = exact transposition up a fifth; tonal = ^1↔^5 swap inside the head, exact after the mutation point.
 3. **Countersubject**: beam search over a rhythm that complements the subject, scored against the subject *and* the answer, treating 4ths and 5ths as dissonant so it inverts at the octave.
 4. **Exposition**: entries in the chosen order; the voice that just finished takes the countersubject, earlier voices get free counterpoint, gaps between entries get links, then a tonic cadence.
-5. **Report**: counts parallels, strong-beat dissonances and crossings.
+5. **Report**: counts parallels, strong-beat dissonances (optionally telling suspensions apart) and crossings, per bar.
 
 See `CLAUDE.md` for architecture and the roadmap.
