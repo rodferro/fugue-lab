@@ -1,7 +1,7 @@
 // Harmonic skeleton: one chord per beat, chosen from the voices that are
 // already fixed (entries, countersubject) before any free voice is written.
 // Free voices then aim at the same chord instead of each guessing its own.
-import { Note, TPB, noteEnd } from './model';
+import { Note, TimeGrid, noteEnd, toTimeGrid } from './model';
 import { Key, mod12, sameKey, scaleOf } from './theory';
 
 export interface Chord {
@@ -70,7 +70,9 @@ function progressionCost(a: ChordCandidate, b: ChordCandidate, crossesBar: boole
 }
 
 /** How badly the notes already fixed in [t, t + dur) fit a chord. */
-function fitCost(fixed: Note[][], t: number, dur: number, c: ChordCandidate): number {
+function fitCost(fixed: Note[][], t: number, dur: number, c: ChordCandidate, grid: TimeGrid): number {
+  // Lengths are counted in 16ths, so the costs don't depend on the grid resolution.
+  const six = grid.sixteenth;
   let cost = 0;
   const present = new Set<number>();
   for (const v of fixed) {
@@ -84,10 +86,10 @@ function fitCost(fixed: Note[][], t: number, dur: number, c: ChordCandidate): nu
         // Sounding on the beat: this is what the chord has to explain.
         if (inChord) present.add(pc);
         else cost += n.start === t ? 9 : 5; // a held note may turn into a suspension
-        if (b - a > 1) cost += inChord ? 0 : 0.5 * (b - a - 1);
+        if (b - a > six) cost += inChord ? 0 : 0.5 * ((b - a) / six - 1);
       } else if (!inChord) {
         // Off the beat: passing notes are cheap, longer ones less so.
-        cost += (a - t === TPB / 2 ? 1.2 : 0.5) + 0.4 * (b - a - 1);
+        cost += ((a - t) % grid.eighth === 0 ? 1.2 : 0.5) + 0.4 * ((b - a) / six - 1);
       }
     }
   }
@@ -98,7 +100,7 @@ function fitCost(fixed: Note[][], t: number, dur: number, c: ChordCandidate): nu
 }
 
 /**
- * Chord per beat over [start, end), by dynamic programming: each beat's chord
+ * Chord per metric beat (a dotted quarter in x/8) over [start, end), by dynamic programming: each beat's chord
  * must explain the fixed notes and connect well to its neighbours. Beats with
  * nothing fixed are filled in by the progression alone. Deterministic.
  */
@@ -107,13 +109,14 @@ export function planHarmony(
   start: number,
   end: number,
   keyAt: (tick: number) => Key,
-  beatsPerBar: number,
+  meter: TimeGrid | number,
   opts: { before?: Chord; closeOn?: Key } = {},
 ): SkeletonBeat[] {
-  const bar = TPB * beatsPerBar;
+  const grid = toTimeGrid(meter);
+  const { bar, beat } = grid;
   const beats: { start: number; dur: number; cands: ChordCandidate[] }[] = [];
   for (let t = start; t < end; ) {
-    const next = Math.min(end, (Math.floor(t / TPB) + 1) * TPB);
+    const next = Math.min(end, (Math.floor(t / beat) + 1) * beat);
     beats.push({ start: t, dur: next - t, cands: candidatesOf(keyAt(t)) });
     t = next;
   }
@@ -126,7 +129,7 @@ export function planHarmony(
     back.push([]);
     const downbeat = b.start % bar === 0;
     b.cands.forEach((c, ci) => {
-      let own = fitCost(fixed, b.start, b.dur, c) + c.prior * (downbeat ? 1 : 0.6);
+      let own = fitCost(fixed, b.start, b.dur, c, grid) + c.prior * (downbeat ? 1 : 0.6);
       if (i === beats.length - 1 && opts.closeOn) {
         // Lead into what follows: end on its dominant, or failing that its tonic.
         const dom = mod12(opts.closeOn.tonic + 7);
@@ -165,9 +168,9 @@ function asCandidate(c: Chord): ChordCandidate {
   return candidatesOf(c.key).find((x) => x.label === c.label) ?? { ...c, deg: 0, prior: 0 };
 }
 
-/** Lookup function over a skeleton; undefined outside it. */
-export function chordLookup(skeleton: SkeletonBeat[]): (tick: number) => Chord | undefined {
+/** Lookup function over a skeleton planned with beats of `beat` ticks; undefined outside it. */
+export function chordLookup(skeleton: SkeletonBeat[], beat: number = toTimeGrid(4).beat): (tick: number) => Chord | undefined {
   const byBeat = new Map<number, Chord>();
-  for (const b of skeleton) byBeat.set(Math.floor(b.start / TPB), b.chord);
-  return (tick) => byBeat.get(Math.floor(tick / TPB));
+  for (const b of skeleton) byBeat.set(Math.floor(b.start / beat), b.chord);
+  return (tick) => byBeat.get(Math.floor(tick / beat));
 }

@@ -65,3 +65,33 @@ test('report spells with key or keys, and generate passes its key plan', () => {
   assert.ok(g.keys.length >= 2);
   assert.equal(g.report.counts.chromaticClash, 0);
 });
+
+test('generate takes a meter and a grid resolution', () => {
+  const fine = subject.map((x) => ({ ...x, start: x.start * 6, dur: x.dur * 6 }));
+  const a = json(generateCommand({ subject, settings: { voices: 3, seed: 4, meter: '6/8' } }).json);
+  const b = json(generateCommand({ subject: fine, settings: { voices: 3, seed: 4, meter: { num: 6, den: 8 }, ticksPerQuarter: 24 } }).json);
+  assert.equal(b.ticksPerBeat, 24);
+  assert.deepEqual(b.meter, { num: 6, den: 8 });
+  assert.equal(b.grid.bar, 72);
+  assert.deepEqual(b.notes, a.notes.map((v: { start: number; dur: number }[]) => v.map((x) => ({ ...x, start: x.start * 6, dur: x.dur * 6 }))));
+  assert.deepEqual(b.report, { ...a.report, length: a.report.length * 6 });
+  assert.equal(a.report.bars, a.length / 12, '6/8 bars of 12 ticks');
+  const midi = generateCommand({ subject: fine, settings: { voices: 2, meter: '6/8', ticksPerQuarter: 24 }, midi: 'x.mid' }).files[0].data;
+  assert.ok(midi.length > 100);
+  assert.throws(() => generateCommand({ subject, settings: { meter: '5/8' } }), RequestError);
+  assert.throws(() => generateCommand({ subject, settings: { meter: { num: 6 } } }), RequestError);
+  assert.throws(() => generateCommand({ subject, settings: { ticksPerQuarter: 6 } }), /multiple of 4/);
+  assert.throws(() => generateCommand({ subject, settings: { beatsPerBar: 0 } }), RequestError);
+});
+
+test('report takes a meter for strong beats and bars', () => {
+  const voices = [[{ pitch: 72, start: 0, dur: 4 }, { pitch: 74, start: 4, dur: 2 }, { pitch: 71, start: 6, dur: 6 }], [{ pitch: 60, start: 0, dur: 12 }]];
+  const r68 = json(reportCommand({ voices, meter: '6/8' }).json);
+  const r34 = json(reportCommand({ voices, beatsPerBar: 3 }).json);
+  assert.equal(r68.summary.bars, 1);
+  assert.equal(r34.summary.bars, 1);
+  assert.deepEqual(r68.issues.map((i: { tick: number }) => i.tick), [6]);
+  assert.deepEqual(r34.issues.map((i: { tick: number }) => i.tick), [4]);
+  assert.throws(() => reportCommand({ voices, meter: '6/8', ticksPerBeat: 3 }), /even/);
+  assert.throws(() => reportCommand({ voices, meter: 'x' }), RequestError);
+});

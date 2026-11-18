@@ -23,7 +23,7 @@
     <button class="btn" id="playSubject" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>Subject</button>
     <button class="btn primary" id="playFugue" type="button" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg><span id="playFugueLabel">Play fugue</span></button>
     <button class="btn" id="stop" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9v9h-9z"/></svg>Stop</button>
-    <label class="tempo" for="bpm">♩ =
+    <label class="tempo" for="bpm"><span id="bpmUnit" title="Beats per minute">♩</span> =
       <input id="bpm" type="range" min="40" max="140" step="2" value="76">
       <output id="bpmOut">76</output>
     </label>
@@ -48,9 +48,18 @@
           <select id="bars"><option value="1">1 bar</option><option value="2">2 bars</option><option value="3">3 bars</option><option value="4">4 bars</option></select>
         </label>
         <label class="field"><span>Meter</span>
-          <select id="meter"><option value="4">4/4</option><option value="3">3/4</option></select>
+          <select id="meter">
+            <option value="4/4">4/4</option><option value="3/4">3/4</option><option value="2/4">2/4</option>
+            <option value="6/8">6/8</option><option value="9/8">9/8</option><option value="12/8">12/8</option><option value="3/8">3/8</option>
+          </select>
         </label>
       </div>
+      <label class="field"><span>Snap to</span>
+        <select id="snap">
+          <option value="12">1/8</option><option value="6">1/16</option><option value="3">1/32</option>
+          <option value="8">1/8 triplet</option><option value="4">1/16 triplet</option>
+        </select>
+      </label>
       <div class="field"><span class="field-label" id="lenLabel">New note length</span>
         <div class="seg" role="radiogroup" aria-labelledby="lenLabel">
           <label><input type="radio" name="len" value="1" id="len1"><span class="mono">1/16</span></label>

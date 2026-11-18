@@ -1,5 +1,5 @@
 // Read-only multi-voice roll of the generated fugue.
-import { TPB, VNote } from '../engine/model';
+import { VNote } from '../engine/model';
 import { FugueResult } from '../engine/fugue';
 import { keyName, pitchName } from '../engine/theory';
 import { Palette, readPalette, roundRect, setupCanvas } from './theme';
@@ -15,6 +15,7 @@ export class FugueView {
   result: FugueResult | null = null;
   muted: boolean[] = [];
   playhead: number | null = null;
+  /** Pixels per tick (of the result's grid). */
   tickW = 9;
   private canvas: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
@@ -53,7 +54,9 @@ export class FugueView {
   private layout(): void {
     if (!this.result) return;
     const avail = this.scroller.clientWidth - PAD * 2;
-    this.tickW = Math.max(6, Math.min(14, avail / this.result.length));
+    // 6-14 px per 16th, whatever the grid resolution.
+    const six = this.result.grid.sixteenth;
+    this.tickW = Math.max(6, Math.min(14, (avail * six) / this.result.length)) / six;
     const w = Math.max(this.scroller.clientWidth, this.result.length * this.tickW + PAD * 2);
     this.rowH = Math.max(4, Math.min(8, 300 / (this.high - this.low + 1)));
     const h = BAND + (this.high - this.low + 1) * this.rowH + PAD;
@@ -79,16 +82,16 @@ export class FugueView {
     const H = parseFloat(this.canvas.style.height);
     ctx.fillStyle = pal.bg;
     ctx.fillRect(0, 0, W, H);
-    const bpb = r.beatsPerBar;
-    for (let t = 0; t <= r.length; t += TPB) {
+    const { beat, bar } = r.grid;
+    for (let t = 0; t <= r.length; t += beat) {
       const xx = Math.round(this.x(t)) + 0.5;
-      ctx.strokeStyle = t % (TPB * bpb) === 0 ? pal.bar : pal.grid;
+      ctx.strokeStyle = t % bar === 0 ? pal.bar : pal.grid;
       ctx.beginPath(); ctx.moveTo(xx, BAND - 6); ctx.lineTo(xx, H - PAD); ctx.stroke();
-      if (t % (TPB * bpb) === 0 && t < r.length) {
+      if (t % bar === 0 && t < r.length) {
         ctx.fillStyle = pal.muted;
         ctx.font = '500 9px "IBM Plex Mono", ui-monospace, monospace';
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText(String(t / (TPB * bpb) + 1), xx + 3, BAND - 8);
+        ctx.fillText(String(t / bar + 1), xx + 3, BAND - 8);
       }
     }
     // entry chips

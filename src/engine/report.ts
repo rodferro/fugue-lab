@@ -6,7 +6,7 @@
 // Strong-beat dissonances are classified by how they are treated (suspension,
 // passing, neighbour, appoggiatura, chordal seventh, unexplained), so that
 // only the unexplained ones need to count as errors.
-import { Note, TPB, noteEnd, sortNotes } from './model';
+import { Meter, Note, TPB, noteEnd, sortNotes } from './model';
 import { Key, KeySpan, chromaticClash, keyAtTick, spelledDissonant } from './theory';
 import { detectKey } from './analyze';
 
@@ -58,10 +58,18 @@ export interface Issue {
 export interface ReportOptions {
   /** Grid ticks per quarter note. Default TPB (16th grid). */
   ticksPerBeat?: number;
-  /** Ticks between the metrically strong points checked for dissonance. Default: every beat. */
+  /**
+   * Ticks between the metrically strong points checked for dissonance.
+   * Default: the meter's beat (a dotted quarter in x/8), else every quarter.
+   */
   strongEvery?: number;
-  /** Beats (of `ticksPerBeat`) per bar; sets how long a pedal point must last. Default 4. */
+  /** Quarter notes (of `ticksPerBeat`) per bar; sets how long a pedal point must last. Default 4. Ignored when `meter` is given. */
   beatsPerBar?: number;
+  /**
+   * Time signature: sets the bar and, unless `strongEvery` is given, the
+   * strong beats (quarters in x/4, dotted quarters in x/8: 6/8 has two).
+   */
+  meter?: Meter;
   /**
    * Classify every strong-beat dissonance (see DissonanceKind). Default true.
    * false gives the old report: every strong-beat dissonance is
@@ -254,15 +262,30 @@ function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: numbe
   return 'unexplainedDissonance';
 }
 
+/**
+ * Beat and bar in ticks for a report: from `meter` when given (x/8 beats in
+ * dotted quarters), else quarter beats and `beatsPerBar` quarters (default 4).
+ */
+export function meterTicks(ticksPerBeat: number, opts: Pick<ReportOptions, 'meter' | 'beatsPerBar'> = {}): { beat: number; bar: number } {
+  const m = opts.meter;
+  if (!m) return { beat: ticksPerBeat, bar: ticksPerBeat * (opts.beatsPerBar ?? 4) };
+  if (m.den === 4) return { beat: ticksPerBeat, bar: ticksPerBeat * m.num };
+  const eighth = ticksPerBeat / 2;
+  if (m.den !== 8 || !Number.isInteger(eighth)) throw new Error(`meter ${m.num}/${m.den} needs an even ticksPerBeat (got ${ticksPerBeat})`);
+  // Compound when the eighths group in threes; 5/8 or 7/8 would beat in eighths.
+  return { beat: m.num % 3 === 0 ? 3 * eighth : eighth, bar: eighth * m.num };
+}
+
 export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): Issue[] {
   const tpb = opts.ticksPerBeat ?? TPB;
-  const strong = opts.strongEvery ?? tpb;
+  const m = meterTicks(tpb, opts);
+  const strong = opts.strongEvery ?? m.beat;
   const beat = Math.max(strong, tpb);
   const window = 2 * beat;
-  const w: Windows = { window, ornWindow: 3 * beat, maxRest: Math.floor(tpb / 2), bar: tpb * (opts.beatsPerBar ?? 4) };
+  const w: Windows = { window, ornWindow: 3 * beat, maxRest: Math.floor(tpb / 2), bar: m.bar };
   const end = Math.max(0, ...voices.flat().map(noteEnd));
   const grid = voices.map((v) => lineGrid(v, end));
-  const spans: KeySpan[] = opts.keys?.length ? [...opts.keys].sort((x, y) => x.start - y.start) : [{ start: 0, key: detectKey(voices.flat())[0].key }];
+  const spans: KeySpan[] = opts.keys?.length ? [...opts.keys].sort((x, y) => x.start - y.start) : [{ start: 0, key: detectKey(voices.flat(), tpb)[0].key }];
   const keyAt: KeyAt = (t) => keyAtTick(spans, t);
   const issues: Issue[] = [];
   for (let i = 0; i < voices.length; i++) {

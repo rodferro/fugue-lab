@@ -1,5 +1,5 @@
 // Canvas piano-roll editor for the (monophonic) subject.
-import { Note, TPB, makeMonophonic, noteEnd } from '../engine/model';
+import { COMMON_TIME, Meter, Note, TimeGrid, makeMonophonic, noteEnd, timeGrid } from '../engine/model';
 import { Key, degreeLabel, mod12, pitchName, scaleOf } from '../engine/theory';
 import { Palette, isBlack, readPalette, roundRect, setupCanvas } from './theme';
 
@@ -16,12 +16,17 @@ const LOW = 36;
 const HIGH = 96;
 const ROW = 13;
 const KB = 44;
+/** The editor's resolution: 24 ticks per quarter holds 32nds and 16th triplets. */
+export const EDIT_TPQ = 24;
 
 export class PianoRoll {
   notes: Note[] = [];
   bars = 2;
-  beatsPerBar = 4;
-  defaultLen = 2;
+  meter: Meter = COMMON_TIME;
+  /** New-note length in ticks; falls back to one snap step when it isn't a multiple of it. */
+  defaultLen = 12;
+  /** Snap step in ticks (6 = a 16th at EDIT_TPQ). */
+  snap = 6;
   key: { key: Key; mutation: number } | null = null;
   ghost: Note[] = [];
   playhead: number | null = null;
@@ -49,7 +54,9 @@ export class PianoRoll {
     this.resize();
   }
 
-  get totalTicks(): number { return this.bars * this.beatsPerBar * TPB; }
+  get grid(): TimeGrid { return timeGrid(EDIT_TPQ, this.meter); }
+  get totalTicks(): number { return this.bars * this.grid.bar; }
+  private snapDown(t: number): number { return Math.floor(t / this.snap) * this.snap; }
   private get tickW(): number { return (this.width - KB) / this.totalTicks; }
   private get height(): number { return (HIGH - LOW + 1) * ROW; }
 
@@ -98,10 +105,11 @@ export class PianoRoll {
       const n = this.notes[h.index];
       this.drag = h.edge
         ? { kind: 'resize', index: h.index, origin: { ...n }, created: false }
-        : { kind: 'move', index: h.index, dTick: Math.floor(h.tickF) - n.start, origin: { ...n }, moved: false };
+        : { kind: 'move', index: h.index, dTick: h.tickF - n.start, origin: { ...n }, moved: false };
     } else {
-      const start = Math.max(0, Math.min(this.totalTicks - 1, Math.floor(h.tickF)));
-      const n: Note = { pitch: h.pitch, start, dur: Math.min(this.defaultLen, this.totalTicks - start) };
+      const start = Math.max(0, Math.min(this.snapDown(this.totalTicks - 1), this.snapDown(h.tickF)));
+      const len = this.defaultLen % this.snap === 0 ? this.defaultLen : this.snap;
+      const n: Note = { pitch: h.pitch, start, dur: Math.min(len, this.totalTicks - start) };
       this.notes.push(n);
       this.selected = this.notes.length - 1;
       this.drag = { kind: 'resize', index: this.selected, origin: { ...n }, created: true };
@@ -119,14 +127,16 @@ export class PianoRoll {
     const n = this.notes[this.drag.index];
     if (this.drag.kind === 'move') {
       this.canvas.style.cursor = 'grabbing';
-      const start = Math.max(0, Math.min(this.totalTicks - n.dur, Math.floor(h.tickF) - this.drag.dTick));
+      // Snap the start to the grid, rounding so a small drag doesn't jump a step.
+      const start = Math.max(0, Math.min(this.totalTicks - n.dur, Math.round((h.tickF - this.drag.dTick) / this.snap) * this.snap));
       const pitch = Math.max(LOW, Math.min(HIGH, h.pitch));
       if (pitch !== n.pitch) this.events.onPreview(pitch);
       if (pitch !== n.pitch || start !== n.start) this.drag.moved = true;
       n.start = start;
       n.pitch = pitch;
     } else {
-      const end = Math.max(n.start + 1, Math.min(this.totalTicks, Math.ceil(h.tickF)));
+      const snapped = Math.ceil(h.tickF / this.snap) * this.snap;
+      const end = Math.min(this.totalTicks, snapped > n.start ? snapped : n.start + this.snap);
       if (!this.drag.created || end > n.start + this.drag.origin.dur) n.dur = end - n.start;
       else if (this.drag.created) n.dur = this.drag.origin.dur;
     }
@@ -173,8 +183,8 @@ export class PianoRoll {
     if (e.key === 'Delete' || e.key === 'Backspace') { this.notes.splice(this.selected, 1); this.selected = -1; this.commit(); return; }
     else if (e.key === 'ArrowUp') n.pitch = Math.min(HIGH, n.pitch + (e.shiftKey ? 12 : 1));
     else if (e.key === 'ArrowDown') n.pitch = Math.max(LOW, n.pitch - (e.shiftKey ? 12 : 1));
-    else if (e.key === 'ArrowLeft') n.start = Math.max(0, n.start - 1);
-    else if (e.key === 'ArrowRight') n.start = Math.min(this.totalTicks - n.dur, n.start + 1);
+    else if (e.key === 'ArrowLeft') n.start = Math.max(0, n.start - this.snap);
+    else if (e.key === 'ArrowRight') n.start = Math.min(this.totalTicks - n.dur, n.start + this.snap);
     else handled = false;
     if (!handled) return;
     e.preventDefault();
@@ -196,10 +206,15 @@ export class PianoRoll {
       ctx.fillStyle = pal.grid;
       ctx.fillRect(KB, y + ROW - 0.5, W - KB, 0.5);
     }
-    for (let t = 0; t <= this.totalTicks; t++) {
+    // Snap lines, then the metric beats (dotted quarters in x/8) and bars.
+    const { beat, bar } = this.grid;
+    const lines = new Set<number>();
+    for (let t = 0; t <= this.totalTicks; t += this.snap) lines.add(t);
+    for (let t = 0; t <= this.totalTicks; t += beat) lines.add(t);
+    for (const t of [...lines].sort((a, b) => a - b)) {
       const x = Math.round(this.xOf(t)) + 0.5;
-      const isBar = t % (TPB * this.beatsPerBar) === 0;
-      const isBeat = t % TPB === 0;
+      const isBar = t % bar === 0;
+      const isBeat = t % beat === 0;
       ctx.strokeStyle = isBar ? pal.bar : isBeat ? pal.beat : pal.grid;
       ctx.lineWidth = isBar ? 1.25 : 1;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();

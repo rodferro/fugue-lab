@@ -2,11 +2,13 @@
 // the research harness. Run with `npm run cli -- <command> [file] [--jsonl]`.
 //
 //   generate  {subject, settings?, midi?, bpm?, report?}   exposition + report summary
-//   report    {voices, ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?, key? | keys?}
+//   report    {voices, ticksPerBeat?, meter? | beatsPerBar?, strongEvery?, classify?, suspensions?, key? | keys?}
 //   answer    {subject, key?, type?, mutation?}
 //
 // Notes are {pitch (MIDI), start, dur} in integer ticks; generate works on the
-// 16th grid (4 ticks per beat). Input comes from [file], or stdin when it is
+// 16th grid (4 ticks per quarter) unless settings.ticksPerQuarter says otherwise
+// (8 for 32nds, 12 for 16th triplets, 24 for both). Meters are "4/4", "3/4",
+// "6/8", ...; x/8 meters are compound, with strong beats on dotted quarters. Input comes from [file], or stdin when it is
 // omitted or "-". With --jsonl every input line is one request and every
 // output line one response ({"error": ...} for a failed line), so a whole
 // corpus can go through one process.

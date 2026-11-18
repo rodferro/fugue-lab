@@ -275,3 +275,48 @@ that supersedes it, not by editing the old one.
   subject-dependent (learned) score.
 - **`FugueSettings.rewards`** overrides the texture's rewards, for tuning
   experiments (fugue-research `heldout --rewards`).
+
+## 2026-11-18 (grid resolution and compound meter)
+
+- **Ticks per quarter is a setting** (`FugueSettings.ticksPerQuarter`, a
+  multiple of 4, default 4). Subjects with 32nds (8 per quarter), 16th
+  triplets (12) or both (24) can be entered and generated. Every time in the
+  engine is derived from a `TimeGrid` (beat, bar, eighth, 16th) instead of
+  `TPB`. Tick-count costs (in `harmony.ts`) are counted in 16ths and key
+  detection weighs durations in 16ths, so nothing depends on the resolution.
+  A test checks this: the examples at ×2, ×3 and ×6 give exactly the scaled
+  fugue, harmony, key plan and report.
+- **16th-grid input is unchanged, bit for bit.** In simple meters the rhythm
+  patterns, their weights and the RNG draws are the same, and the old
+  bar-crossing join in 3/4 is kept. 144 configurations (4 examples ×
+  2/3/4 voices × 4/4 and 3/4 × 6 seeds) gave the same notes, harmony, keys,
+  reports and MIDI bytes as before.
+- **The free voices still move in 16ths at the finest.** On a finer grid they
+  play 16th-based rhythms against the subject's 32nds or triplets. Writing
+  32nds or triplets in the free voices would need new rhythm patterns and
+  more beam work; not needed for expositions so far.
+- **Compound meters (3/8, 6/8, 9/8, 12/8) beat in dotted quarters.** Strong
+  beats (the dissonance rules, suspension windows of 2 and 3 beats, the
+  4-voice harmonic skeleton's chord per beat) fall on dotted quarters, so 6/8
+  has two per bar and **3/8 one** (felt in one, as in Bach's fast 3/8 fugues).
+  Compound beats get their own eighth-based rhythm patterns, and two beats are
+  never joined across a bar line. Other x/8 meters (5/8, 7/8) are refused by
+  the generator; the report beats them in eighths.
+- **The report takes `meter`**, which sets the bar and, unless `strongEvery`
+  is given, the strong beats. `ticksPerBeat`, `strongEvery` and `beatsPerBar`
+  (quarters per bar) work as before, so fugue-research's calls are unaffected.
+- **Rewards were not retuned for compound meters** (see the 2026-11-18
+  held-out entry: no more tuning on our own subjects). Measured on four
+  original subjects written for this change (6/8, 12/8, 3/8 and 9/8; three are
+  in grid.test.ts), 20 seeds each (unexplained + chromatic clash per bar,
+  3 / 4 voices): 6/8 0 / 0, 12/8 0 / 0.006, 3/8 0 / 0, 9/8 0 / 0.027
+  (two chromatic clashes in 20 fugues). Parallels: 3 in 20 four-voice 6/8
+  fugues, 2 in 9/8. Suspension rates are not comparable to the 4/4 targets
+  (a 6/8 bar has two beats); they await Bach compound-meter reference rates.
+- **The UI edits at 24 per quarter** (snap 1/8, 1/16 by default, 1/32, 1/8 and
+  1/16 triplets) and generates on the coarsest grid that holds the subject
+  (`coarsestTicksPerQuarter`). A 16th-grid subject runs at 4 per quarter,
+  exactly as before. Saved subjects from older versions are scaled ×6 on load,
+  and their `beatsPerBar` becomes a meter. The tempo slider counts beats
+  (♩. in x/8); MIDI gets the quarter-note tempo, the real time signature
+  (clocks per click 36 in x/8) and 480 PPQ at any grid that divides it.

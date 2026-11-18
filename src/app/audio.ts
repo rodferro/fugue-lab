@@ -1,6 +1,6 @@
 // Web Audio playback with three small synthesized instruments.
 // No samples or libraries; swap in a SoundFont player later if wanted.
-import { Note, TPB } from '../engine/model';
+import { Note } from '../engine/model';
 
 export type Instrument = 'harpsichord' | 'organ' | 'soft';
 
@@ -35,10 +35,11 @@ export class Player {
     this.voiceNote(ctx, out, pitch, ctx.currentTime + 0.01, 0.25, instrument, 0.22);
   }
 
-  play(voices: PlayVoice[], bpm: number, instrument: Instrument, fromTick = 0, onEnd?: () => void): void {
+  /** `bpm` counts beats of `ticksPerBeat` ticks (a dotted quarter in x/8). */
+  play(voices: PlayVoice[], bpm: number, ticksPerBeat: number, instrument: Instrument, fromTick = 0, onEnd?: () => void): void {
     this.stop();
     const ctx = this.ensure();
-    this.secPerTick = 60 / bpm / TPB;
+    this.secPerTick = 60 / bpm / ticksPerBeat;
     this.master = ctx.createGain();
     this.master.gain.value = 0.9;
     const comp = ctx.createDynamicsCompressor();

@@ -1,8 +1,7 @@
 // Minimal Standard MIDI File (format 1) writer: one track per voice.
-import { Note, TPB } from './model';
+import { Meter, Note, TPB } from './model';
 
 const PPQ = 480;
-const TICK = PPQ / TPB; // MIDI ticks per grid tick
 
 function vlq(n: number): number[] {
   const bytes = [n & 0x7f];
@@ -33,11 +32,22 @@ export interface MidiTrack {
   program?: number; // General MIDI program (0-based)
 }
 
-export function writeMidi(tracks: MidiTrack[], bpm: number, beatsPerBar = 4): Uint8Array {
+/**
+ * `bpm` counts quarter notes (MIDI's tempo unit). `meter` is the time signature,
+ * or the old beats-per-bar number for x/4; `ticksPerQuarter` is the grid the
+ * notes are in and must divide 480.
+ */
+export function writeMidi(tracks: MidiTrack[], bpm: number, meter: Meter | number = 4, ticksPerQuarter = TPB): Uint8Array {
+  if (!Number.isInteger(ticksPerQuarter) || ticksPerQuarter < 1 || PPQ % ticksPerQuarter) throw new Error(`ticksPerQuarter must divide ${PPQ}, got ${ticksPerQuarter}`);
+  const TICK = PPQ / ticksPerQuarter; // MIDI ticks per grid tick
+  const m: Meter = typeof meter === 'number' ? { num: meter, den: 4 } : meter;
   const tempo = Math.round(60_000_000 / bpm);
+  // Time signature: numerator, log2 denominator, MIDI clocks per metronome
+  // click (24 = a quarter; 36 = the dotted-quarter beat of x/8), 32nds per quarter.
+  const click = m.den === 8 ? 36 : 24;
   const conductor = [
     0, 0xff, 0x51, 3, (tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255,
-    0, 0xff, 0x58, 4, beatsPerBar, 2, 24, 8,
+    0, 0xff, 0x58, 4, m.num, Math.log2(m.den), click, 8,
     0, 0xff, 0x2f, 0,
   ];
   const out = [...chunk('MThd', [0, 1, (tracks.length + 1) >> 8, (tracks.length + 1) & 255, (PPQ >> 8) & 255, PPQ & 255]), ...chunk('MTrk', conductor)];

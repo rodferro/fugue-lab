@@ -1,5 +1,5 @@
 // Subject analysis: key detection, tonal-answer mutation point, warnings.
-import { Note, lengthOf, sortNotes } from './model';
+import { Note, TPB, lengthOf, sortNotes } from './model';
 import { Key, Mode, keyName, mod12, toScalePitch } from './theory';
 
 // Krumhansl–Kessler key profiles.
@@ -23,12 +23,15 @@ export interface KeyCandidate {
   score: number;
 }
 
-/** Duration-weighted Krumhansl–Schmuckler, nudged toward keys whose tonic frames the subject. */
-export function detectKey(notes: Note[]): KeyCandidate[] {
+/**
+ * Duration-weighted Krumhansl–Schmuckler, nudged toward keys whose tonic frames
+ * the subject. Durations are weighed in 16ths whatever the grid resolution.
+ */
+export function detectKey(notes: Note[], ticksPerQuarter = TPB): KeyCandidate[] {
   if (!notes.length) return [{ key: { tonic: 0, mode: 'major' }, score: 0 }];
   const sorted = sortNotes(notes);
   const hist = new Array(12).fill(0);
-  for (const n of sorted) hist[mod12(n.pitch)] += Math.sqrt(n.dur);
+  for (const n of sorted) hist[mod12(n.pitch)] += Math.sqrt((n.dur * TPB) / ticksPerQuarter);
   const first = mod12(sorted[0].pitch);
   const last = mod12(sorted[sorted.length - 1].pitch);
   const out: KeyCandidate[] = [];
@@ -98,9 +101,9 @@ export interface SubjectAnalysis {
   warnings: string[];
 }
 
-export function analyzeSubject(notes: Note[], keyOverride?: Key): SubjectAnalysis {
+export function analyzeSubject(notes: Note[], keyOverride?: Key, ticksPerQuarter = TPB): SubjectAnalysis {
   const sorted = sortNotes(notes);
-  const candidates = detectKey(sorted);
+  const candidates = detectKey(sorted, ticksPerQuarter);
   const key = keyOverride ?? candidates[0].key;
   const warnings: string[] = [];
   const pitches = sorted.map((n) => n.pitch);

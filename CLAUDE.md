@@ -27,7 +27,9 @@ RESEARCH.md's "Engine prerequisites" when they land.
 
 ```
 src/engine/            pure TS, no DOM — keep it that way (reusable in a worker/CLI)
-  model.ts             Note {pitch MIDI, start, dur} in ticks (TPB = 4 → 16th grid), VNote, voice sets/ranges
+  model.ts             Note {pitch MIDI, start, dur} in ticks, VNote, voice sets/ranges; Meter, TimeGrid
+                       (timeGrid(ticksPerQuarter, meter) → beat/bar/eighth/16th), rescaleNotes,
+                       coarsestTicksPerQuarter
   theory.ts            Key, scales, ScalePitch (degree/oct/acc), diatonicShift, chordsOf, names
   analyze.ts           detectKey (KS profiles + first/last-note bias), autoMutation, warnings
   answer.ts            makeAnswer(subject, key, 'real'|'tonal', mutation)
@@ -36,7 +38,7 @@ src/engine/            pure TS, no DOM — keep it that way (reusable in a worke
   fugue.ts             generateFugue(subject, settings) → FugueResult (exposition planner/renderer)
   report.ts            voiceLeadingReport(voices, opts): parallels, classified strong-beat
                        dissonances, crossings; summarizeReport → counts per bar
-  midi.ts              SMF type-1 writer
+  midi.ts              SMF type-1 writer (time signature from the meter; ticksPerQuarter must divide 480)
   engine.test.ts
 src/cli/               fugue-cli: the engine as JSON in / JSON out (not part of build-single)
   commands.ts          generate / report / answer handlers, pure and tested (cli.test.ts)
@@ -44,7 +46,8 @@ src/cli/               fugue-cli: the engine as JSON in / JSON out (not part of 
   node.d.ts            minimal Node typings (tsconfig has "types": []); delete if @types/node is added
 src/app/               UI
   main.ts              state, form wiring, playback, export, localStorage
-  pianoRoll.ts         subject editor (monophonic; edited note wins overlaps)
+  pianoRoll.ts         subject editor at EDIT_TPQ = 24 per quarter, snap 1/8…1/32 and triplets
+                       (default 1/16); monophonic, edited note wins overlaps
   fugueView.ts         read-only multi-voice roll with entry band, mute, seek, hover tip
   audio.ts, theme.ts (canvas colors from CSS vars), zip.ts, examples.ts, styles.css
 index.html             markup; <!--HEAD/BODY-START/END--> markers are used by build-single
@@ -52,7 +55,16 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 
 ## Engine conventions
 
-- Time in ticks (16ths). Pitch is MIDI at the edges; use `toScalePitch` /
+- Time in integer ticks; `FugueSettings.ticksPerQuarter` (a multiple of 4,
+  default 4 = the 16th grid; 24 holds 32nds and 16th triplets) and `meter`
+  (x/4, or compound 3/8, 6/8, 9/8, 12/8) give a `TimeGrid`. **Never write a
+  tick literal**: use `grid.beat` (strong beats: quarters, dotted quarters in
+  x/8), `grid.bar`, `grid.eighth`, `grid.sixteenth`. A test checks that a
+  16th-grid subject at 8/12/24 per quarter gives exactly the scaled fugue, and
+  `TPB` is only the default. The free voices move in 16ths at the finest.
+  `beatsPerBar` survives as a legacy x/4 setting and, on FugueResult, as
+  quarters per bar (what the report's `beatsPerBar` option means).
+- Pitch is MIDI at the edges; use `toScalePitch` /
   `diatonicShift` when reasoning in degrees. Minor keys allow raised 6/7.
 - Voices are indexed top (0) to bottom. `VOICE_SETS[n]` has names and ranges.
 - Determinism: everything random goes through the seeded `Rng`. Same subject +
@@ -119,9 +131,11 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 ## CLI and the report as a metric
 
 `npm run cli -- <generate|report|answer> [file|-] [--jsonl]`. Notes are integer-tick
-`{pitch, start, dur}`; `generate` is on the 16th grid, `report` takes `ticksPerBeat`,
-`beatsPerBar` and `strongEvery` so imported music (e.g. voice-separated Bach) can be
-measured at its own resolution.
+`{pitch, start, dur}`; `generate` is on the 16th grid unless `settings.ticksPerQuarter`
+says otherwise, with `settings.meter` as `"6/8"` or `{num, den}`. `report` takes
+`ticksPerBeat` (per quarter), `meter` (sets the bar and the strong beats; x/8 beats in
+dotted quarters) or the older `beatsPerBar` (quarters per bar), and `strongEvery`, so
+imported music (e.g. voice-separated Bach) can be measured at its own resolution.
 
 Vertical intervals are spelled in the key (`theory.ts`: `spelledInterval`,
 `spelledDissonant`, `chromaticClash`), in the generator via `keyAt` and in the report

@@ -1,12 +1,12 @@
 // Request handlers for fugue-cli: plain objects in, plain objects out, no I/O,
 // so they can be tested directly. See fugue-cli.ts for the command line.
-import { Note, TPB, VOICE_SETS, makeMonophonic, noteEnd, sortNotes } from '../engine/model';
+import { Meter, Note, TPB, VOICE_SETS, makeMonophonic, noteEnd, parseMeter, sortNotes, timeGrid } from '../engine/model';
 import { Key, keyName } from '../engine/theory';
 import { analyzeSubject } from '../engine/analyze';
 import { AnswerType, makeAnswer } from '../engine/answer';
 import { FugueSettings, generateFugue } from '../engine/fugue';
 import { writeMidi } from '../engine/midi';
-import { ReportOptions, summarizeReport, voiceLeadingReport } from '../engine/report';
+import { ReportOptions, meterTicks, summarizeReport, voiceLeadingReport } from '../engine/report';
 
 export class RequestError extends Error {}
 
@@ -49,10 +49,25 @@ function key(v: unknown): Key | undefined {
   return { tonic, mode: o.mode };
 }
 
+/** "6/8" or {num, den}. */
+function meter(v: unknown, what: string): Meter {
+  try {
+    if (typeof v === 'string') return parseMeter(v);
+    const o = obj(v, what);
+    return parseMeter(`${int(o.num, `${what}.num`, 1)}/${int(o.den, `${what}.den`, 1)}`);
+  } catch (e) {
+    throw e instanceof RequestError ? e : new RequestError(`${what}: ${(e as Error).message}`);
+  }
+}
+
 function reportOptions(o: Obj): ReportOptions {
   const out: ReportOptions = {};
   if (o.ticksPerBeat !== undefined) out.ticksPerBeat = int(o.ticksPerBeat, 'ticksPerBeat', 1);
   if (o.strongEvery !== undefined) out.strongEvery = int(o.strongEvery, 'strongEvery', 1);
+  if (o.meter !== undefined) {
+    out.meter = meter(o.meter, 'meter');
+    if (out.meter.den === 8 && (out.ticksPerBeat ?? TPB) % 2) throw new RequestError('an x/8 meter needs an even ticksPerBeat');
+  }
   if (o.classify !== undefined) out.classify = o.classify !== false;
   if (o.keys !== undefined) {
     if (!Array.isArray(o.keys) || o.keys.length === 0) throw new RequestError('keys must be a non-empty array of {start, key}');
@@ -67,41 +82,59 @@ function reportOptions(o: Obj): ReportOptions {
   return out;
 }
 
-/** {subject, settings?, midi?, bpm?, report?: ReportOptions} → the generated exposition plus its report summary. */
+/**
+ * {subject, settings?, midi?, bpm?, report?: ReportOptions} → the generated exposition plus its report summary.
+ * settings.meter is "6/8" or {num, den}; settings.ticksPerQuarter (default 4) is the grid of the subject and the result.
+ */
 export function generateCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
   const subject = notes(r.subject, 'subject');
   if (subject.length === 0) throw new RequestError('subject is empty');
-  const settings = (r.settings === undefined ? {} : obj(r.settings, 'settings')) as Partial<FugueSettings>;
+  const settings = { ...(r.settings === undefined ? {} : obj(r.settings, 'settings')) } as Partial<FugueSettings>;
   if (settings.voices !== undefined && !(settings.voices in VOICE_SETS)) throw new RequestError('settings.voices must be 2, 3 or 4');
   if (settings.key !== undefined) settings.key = key(settings.key) ?? null;
+  if (settings.meter !== undefined) settings.meter = meter(settings.meter, 'settings.meter');
+  if (settings.beatsPerBar !== undefined) int(settings.beatsPerBar, 'settings.beatsPerBar', 1);
+  if (settings.ticksPerQuarter !== undefined) {
+    const q = int(settings.ticksPerQuarter, 'settings.ticksPerQuarter', 4);
+    if (q % 4 || 480 % q) throw new RequestError('settings.ticksPerQuarter must be a multiple of 4 that divides 480 (4, 8, 12, 24, ...)');
+  }
+  try {
+    timeGrid(settings.ticksPerQuarter ?? TPB, settings.meter ?? { num: settings.beatsPerBar ?? 4, den: 4 });
+  } catch (e) {
+    throw new RequestError(`settings: ${(e as Error).message}`);
+  }
   const f = generateFugue(subject, settings);
-  const opts = { ...reportOptions(r.report === undefined ? {} : obj(r.report, 'report')), beatsPerBar: f.beatsPerBar, keys: f.keys };
+  const opts: ReportOptions = { ...reportOptions(r.report === undefined ? {} : obj(r.report, 'report')), ticksPerBeat: f.ticksPerQuarter, meter: f.meter, keys: f.keys };
   const issues = voiceLeadingReport(f.notes, opts);
   const files: OutputFile[] = [];
   if (typeof r.midi === 'string' && r.midi) {
     const bpm = r.bpm === undefined ? 72 : int(r.bpm, 'bpm', 1);
-    files.push({ path: r.midi, data: writeMidi(f.voices.map((v, i) => ({ name: v.name, notes: f.notes[i], channel: i })), bpm, f.beatsPerBar) });
+    files.push({ path: r.midi, data: writeMidi(f.voices.map((v, i) => ({ name: v.name, notes: f.notes[i], channel: i })), bpm, f.meter, f.ticksPerQuarter) });
   }
   return {
     json: {
-      ticksPerBeat: TPB,
+      ticksPerBeat: f.ticksPerQuarter,
       keyName: keyName(f.key),
       ...f,
-      report: summarizeReport(issues, f.length, TPB * f.beatsPerBar),
+      report: summarizeReport(issues, f.length, f.grid.bar),
       issues,
     },
     files,
   };
 }
 
-/** {voices: Note[][], ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?, key? | keys?} → issues and per-bar summary. */
+/**
+ * {voices: Note[][], ticksPerBeat?, meter? | beatsPerBar?, strongEvery?, classify?, suspensions?, key? | keys?} → issues and per-bar summary.
+ * meter ("6/8" or {num, den}) sets the bar and the strong beats; beatsPerBar counts quarters and is ignored with a meter.
+ */
 export function reportCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
   if (!Array.isArray(r.voices) || r.voices.length < 2) throw new RequestError('voices must be an array of at least two note arrays');
   const opts = reportOptions(r);
   const tpb = opts.ticksPerBeat ?? TPB;
   const beatsPerBar = r.beatsPerBar === undefined ? 4 : int(r.beatsPerBar, 'beatsPerBar', 1);
+  const bar = meterTicks(tpb, { meter: opts.meter, beatsPerBar }).bar;
   let trimmed = 0;
   const voices = r.voices.map((v, i) => {
     const line = notes(v, `voices[${i}]`);
@@ -112,7 +145,7 @@ export function reportCommand(req: unknown): CommandResult {
   const length = Math.max(0, ...voices.flat().map(noteEnd));
   const issues = voiceLeadingReport(voices, { ...opts, beatsPerBar });
   return {
-    json: { summary: summarizeReport(issues, length, tpb * beatsPerBar), issues, overlapsTrimmed: trimmed },
+    json: { summary: summarizeReport(issues, length, bar), issues, overlapsTrimmed: trimmed },
     files: [],
   };
 }

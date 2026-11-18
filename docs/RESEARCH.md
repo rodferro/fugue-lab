@@ -107,6 +107,7 @@ each pre-training stage on/off; beat-based vs. time-shift tokens.
 - [x] Generator: reward ornamented suspensions, retardations, accented passing tones and chordal sevenths, calibrated to Bach's 4/4 rates (2026-11-18)
 - [ ] Tonal answer tail mutation (weakness #3), or restrict the test set and say so
 - [ ] Data pipeline keeps full resolution (32nds, compound meter); quantize only for engine metrics
+      (engine side done 2026-11-18: generate and report take `ticksPerQuarter`/`ticksPerBeat` and a meter, x/8 compound)
 
 ## Milestones
 

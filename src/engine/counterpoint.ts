@@ -1,7 +1,7 @@
 // Line generation by beam search over a fixed rhythm.
 // Every candidate pitch is scored against the voices already written
 // (harmonic rules) and against the line itself (melodic rules).
-import { Note, TPB, noteEnd } from './model';
+import { Note, TimeGrid, noteEnd, toTimeGrid } from './model';
 import { Key, chordsOf, chromaticClash, mod12, spelledDissonant, usablePcs } from './theory';
 import { Rng, pickWeighted } from './rng';
 import { Chord } from './harmony';
@@ -39,7 +39,8 @@ export interface LineSpec {
    * the other voices have not supplied yet.
    */
   chordAt?: (tick: number) => Chord | undefined;
-  beatsPerBar: number;
+  /** Resolution and meter: strong beats are the metric beats (dotted quarters in x/8). A number is the old beatsPerBar (x/4, 16th grid). */
+  grid: TimeGrid | number;
   /** Overrides for DEFAULT_REWARDS. */
   rewards?: Partial<DissonanceRewards>;
   beam?: number;
@@ -65,9 +66,10 @@ const IMPERFECT = [false, false, false, true, true, false, false, false, true, t
  * When a fixed voice is the suspended one, its resolution is known: the line
  * moving into the dissonance is not penalized, but the waived penalty is
  * charged if the line is dissonant with the resolution note when it arrives.
+ * Windows are in metric beats: a resolution within two beats, an ornamented one within three.
  */
-const SUSP_WINDOW = 2 * TPB;
-const ORN_WINDOW = 3 * TPB;
+const SUSP_BEATS = 2;
+const ORN_BEATS = 3;
 /**
  * Two forms of one scale degree sounding together (C against C♯ in D minor),
  * at any tick: never treated or rewarded, and at least as costly as an
@@ -200,11 +202,14 @@ function melodicCost(prev: number, p: number, node: BeamNode, key: Key): number 
 }
 
 export function generateLine(spec: LineSpec, rng: Rng): Note[] {
-  const { slots, range, keyAt, contexts, beatsPerBar } = spec;
+  const { slots, range, keyAt, contexts } = spec;
   if (!slots.length) return [];
   const beam = spec.beam ?? 120;
   const noise = spec.noise ?? 1.2;
-  const bar = TPB * beatsPerBar;
+  const grid = toTimeGrid(spec.grid);
+  const { bar, beat } = grid;
+  const SUSP_WINDOW = SUSP_BEATS * beat;
+  const ORN_WINDOW = ORN_BEATS * beat;
   const t0 = slots[0].start - 1;
   const t1 = noteEnd(slots[slots.length - 1]);
   const grids = contexts.map((voices, i) => buildGrid(voices, spec.relations?.[i], t0, t1));
@@ -240,7 +245,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         let lowest = p;
         let count = 1;
         for (const v of g.pitch) if (v[ti] >= 0) { lowest = Math.min(lowest, v[ti]); count++; }
-        const strong = t % TPB === 0;
+        const strong = t % beat === 0;
         const downbeat = t % bar === 0;
         const chord = strong ? spec.chordAt?.(t) : undefined;
         const resolvable = strong && canResolve && end <= t + SUSP_WINDOW;
@@ -393,10 +398,10 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     if (ti < 1 || v[ti - 1] < 0) return false;
     const fall = v[ti - 1] - v[ti];
     if (fall !== 1 && fall !== 2) return false;
-    const beat = Math.floor((ti + g.t0 - 1) / TPB) * TPB - g.t0; // last strong tick before ti
+    const b = Math.floor((ti + g.t0 - 1) / beat) * beat - g.t0; // last strong tick before ti
     // Sounding just before the beat and through it (held or re-struck), with no new note since.
-    if (beat < 1 || v[beat - 1] !== v[ti - 1] || v[beat] !== v[ti - 1]) return false;
-    for (let u = beat + 1; u < ti; u++) if (g.onset[vi][u]) return false;
+    if (b < 1 || v[b - 1] !== v[ti - 1] || v[b] !== v[ti - 1]) return false;
+    for (let u = b + 1; u < ti; u++) if (g.onset[vi][u]) return false;
     return true;
   }
 
@@ -523,27 +528,48 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
 }
 
 /**
+ * Rhythm patterns per beat, in 16ths, by how busy the other voices are
+ * (onsets in the beat: 0, 1, 2, 3+), with weights. Simple beats are a quarter;
+ * compound beats a dotted quarter, divided in eighths.
+ */
+type Patterns = [number[][], number[]][];
+const SIMPLE_PATTERNS: Patterns = [
+  [[[2, 2], [1, 1, 1, 1], [1, 1, 2], [3, 1]], [0.4, 0.32, 0.18, 0.1]],
+  [[[2, 2], [1, 1, 2], [2, 1, 1], [1, 1, 1, 1], [3, 1]], [0.45, 0.18, 0.14, 0.13, 0.1]],
+  [[[4], [2, 2]], [0.6, 0.4]],
+  [[[4]], [1]],
+];
+const COMPOUND_PATTERNS: Patterns = [
+  [[[2, 2, 2], [1, 1, 1, 1, 2], [4, 2], [2, 1, 1, 2], [3, 1, 2]], [0.4, 0.22, 0.16, 0.14, 0.08]],
+  [[[2, 2, 2], [4, 2], [2, 1, 1, 2], [1, 1, 2, 2], [3, 1, 2]], [0.4, 0.24, 0.14, 0.12, 0.1]],
+  [[[6], [4, 2]], [0.6, 0.4]],
+  [[[6]], [1]],
+];
+
+/**
  * A rhythm that moves where the other voices hold and holds where they move.
- * Works beat by beat over [start, end).
+ * Works beat by beat over [start, end). `leadRest` is in ticks.
  */
 export function complementaryRhythm(
   voices: Note[][],
   start: number,
   end: number,
-  beatsPerBar: number,
+  meter: TimeGrid | number,
   rng: Rng,
   opts: { leadRest?: number; endLong?: boolean } = {},
 ): Slot[] {
   if (end <= start) return [];
+  const grid = toTimeGrid(meter);
+  const { bar, beat, sixteenth } = grid;
+  const patterns = grid.compound ? COMPOUND_PATTERNS : SIMPLE_PATTERNS;
   const onsets = new Set<number>();
   for (const v of voices) for (const n of v) if (n.start >= start && n.start < end) onsets.add(n.start);
   const slots: Slot[] = [];
   let t = start + (opts.leadRest ?? 0);
-  const bar = TPB * beatsPerBar;
   while (t < end) {
-    const beatEnd = Math.min(end, (Math.floor(t / TPB) + 1) * TPB);
+    const beatEnd = Math.min(end, (Math.floor(t / beat) + 1) * beat);
     const len = beatEnd - t;
-    if (len < TPB) {
+    if (len < beat) {
       // partial beat: one note to the beat line
       slots.push({ start: t, dur: len });
       t = beatEnd;
@@ -551,29 +577,30 @@ export function complementaryRhythm(
     }
     let busy = 0;
     for (let x = t; x < beatEnd; x++) if (onsets.has(x)) busy++;
-    let pattern: number[];
-    if (busy >= 3) pattern = [4];
-    else if (busy === 2) pattern = pickWeighted(rng, [[4], [2, 2]], [0.6, 0.4]);
-    else if (busy === 1) pattern = pickWeighted(rng, [[2, 2], [1, 1, 2], [2, 1, 1], [1, 1, 1, 1], [3, 1]], [0.45, 0.18, 0.14, 0.13, 0.1]);
-    else pattern = pickWeighted(rng, [[2, 2], [1, 1, 1, 1], [1, 1, 2], [3, 1]], [0.4, 0.32, 0.18, 0.1]);
+    const [options, weights] = patterns[Math.min(busy, 3)];
+    // A single option takes no random draw, as before.
+    const pattern = options.length === 1 ? options[0] : pickWeighted(rng, options, weights);
     for (const d of pattern) {
-      slots.push({ start: t, dur: d });
-      t += d;
+      slots.push({ start: t, dur: d * sixteenth });
+      t += d * sixteenth;
     }
   }
-  // Join some pairs of quarters into half notes when they start on a strong beat.
+  // Join some pairs of whole beats into one note when they start on an odd-numbered
+  // beat, 1, 3, ... (half notes in 4/4, dotted halves in 6/8). Compound meters never join
+  // across the bar line; simple ones keep their old rule (3/4 may syncopate
+  // over it), so their results stay as they were.
   const merged: Slot[] = [];
   for (const s of slots) {
     const prev = merged[merged.length - 1];
     if (
-      prev && prev.dur === TPB && s.dur === TPB && prev.start + prev.dur === s.start &&
-      (prev.start % bar) % (TPB * 2) === 0 && rng() < 0.35
+      prev && prev.dur === beat && s.dur === beat && prev.start + prev.dur === s.start &&
+      (prev.start % bar) % (beat * 2) === 0 && !(grid.compound && (prev.start % bar) + 2 * beat > bar) && rng() < 0.35
     ) {
-      prev.dur = TPB * 2;
+      prev.dur = beat * 2;
     } else merged.push({ ...s });
   }
   if (opts.endLong && merged.length > 1) {
-    const lastBeat = Math.floor((end - 1) / TPB) * TPB;
+    const lastBeat = Math.floor((end - 1) / beat) * beat;
     while (merged.length > 1 && merged[merged.length - 1].start > lastBeat && merged[merged.length - 2].start >= lastBeat) merged.pop();
     const last = merged[merged.length - 1];
     last.dur = end - last.start;

@@ -1,6 +1,6 @@
 // Exposition planner and renderer: places subject/answer entries, the
 // countersubject, free counterpoint, links between entries and a closing cadence.
-import { Note, Role, TPB, VNote, VOICE_SETS, VoiceDef, lengthOf, makeMonophonic, noteEnd, shiftTime, sortNotes, transpose } from './model';
+import { COMMON_TIME, Meter, Note, Role, TPB, TimeGrid, VNote, VOICE_SETS, VoiceDef, lengthOf, makeMonophonic, noteEnd, shiftTime, sortNotes, timeGrid, transpose } from './model';
 import { Key, KeySpan, dominantOf, sameKey, tonicTriad } from './theory';
 import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
@@ -39,7 +39,16 @@ export interface FugueSettings {
   cadence: boolean;
   /** End a minor-key fugue on a major chord. */
   picardy: boolean;
-  beatsPerBar: number;
+  /** Time signature; x/8 meters are compound (strong beats on dotted quarters). */
+  meter: Meter;
+  /**
+   * Grid resolution: ticks per quarter note, a multiple of 4. The subject and
+   * the result are in these ticks; 4 is the 16th grid, 24 holds 32nds and
+   * 16th triplets. The free voices still move in 16ths at the finest.
+   */
+  ticksPerQuarter: number;
+  /** Legacy shorthand for meter {num: beatsPerBar, den: 4}; used only when `meter` is not given. */
+  beatsPerBar?: number;
   seed: number;
   /** Overrides for the texture's dissonance rewards (TEXTURE_REWARDS); for tuning experiments. */
   rewards?: Partial<DissonanceRewards>;
@@ -56,7 +65,8 @@ export const DEFAULT_SETTINGS: FugueSettings = {
   codettaBars: 0,
   cadence: true,
   picardy: true,
-  beatsPerBar: 4,
+  meter: COMMON_TIME,
+  ticksPerQuarter: TPB,
   seed: 1,
 };
 
@@ -89,8 +99,18 @@ export interface FugueResult {
   /** Countersubject as generated against the subject (tonic, time 0). */
   countersubject: Note[] | null;
   length: number;
+  meter: Meter;
+  /** Ticks per quarter note of every time in the result. */
+  ticksPerQuarter: number;
+  /** Beat, bar and subdivision sizes in ticks, from meter and ticksPerQuarter. */
+  grid: TimeGrid;
+  /**
+   * Quarter notes per bar (3 in 6/8), so that ticksPerQuarter × beatsPerBar is
+   * the bar, as the report's beatsPerBar option expects. Kept for older
+   * callers; grid.bar and grid.beatsPerBar (metric beats) are clearer.
+   */
   beatsPerBar: number;
-  /** Chord per beat that the free voices were written to (4 voices only; otherwise empty). */
+  /** Chord per metric beat that the free voices were written to (4 voices only; otherwise empty). */
   harmony: SkeletonBeat[];
   /**
    * The key plan the voices were written in, as spans: each entry's key while
@@ -145,11 +165,19 @@ function validOrder(order: number[] | null, n: number): order is number[] {
   return !!order && order.length === n && new Set(order).size === n && order.every((v) => v >= 0 && v < n);
 }
 
+/** The settings' meter, falling back to the legacy beatsPerBar (x/4). */
+export function meterOf(settings: Partial<FugueSettings>): Meter {
+  if (settings.meter) return settings.meter;
+  if (settings.beatsPerBar !== undefined) return { num: settings.beatsPerBar, den: 4 };
+  return DEFAULT_SETTINGS.meter;
+}
+
 export function generateFugue(input: Note[], settings: Partial<FugueSettings> = {}): FugueResult {
-  const s: FugueSettings = { ...DEFAULT_SETTINGS, ...settings };
+  const s: FugueSettings = { ...DEFAULT_SETTINGS, ...settings, meter: meterOf(settings) };
+  const grid = timeGrid(s.ticksPerQuarter, s.meter);
   const rng: Rng = makeRng(s.seed);
   const subject = sortNotes(makeMonophonic(input));
-  const analysis = analyzeSubject(subject, s.key ?? undefined);
+  const analysis = analyzeSubject(subject, s.key ?? undefined, grid.ticksPerQuarter);
   const key = analysis.key;
   const dom = dominantOf(key);
   const mutation = s.mutation ?? analysis.autoMutation;
@@ -157,7 +185,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   const voices = VOICE_SETS[s.voices];
   const n = voices.length;
   const order = validOrder(s.entryOrder, n) ? s.entryOrder : defaultOrder(subject, voices);
-  const bar = TPB * s.beatsPerBar;
+  const bar = grid.bar;
   const subLen = Math.max(1, lengthOf(subject));
   const blockLen = Math.ceil(subLen / bar) * bar;
   const notes: VNote[][] = voices.map(() => []);
@@ -193,7 +221,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   if (s.countersubject && n >= 2) {
     const mean = Math.round(subject.reduce((a, x) => a + x.pitch, 0) / subject.length);
     const range: [number, number] = [mean + 1, mean + 17];
-    const slots = complementaryRhythm([subject], 0, subLen, s.beatsPerBar, rng, { leadRest: 2, endLong: true });
+    const slots = complementaryRhythm([subject], 0, subLen, grid, rng, { leadRest: grid.eighth, endLong: true });
     cs0 = generateLine(
       {
         slots,
@@ -202,7 +230,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         contexts: [[subject], [transpose(answer.notes, -7)]],
         relations: [['above'], ['above']],
         invertible: true,
-        beatsPerBar: s.beatsPerBar,
+        grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
         beam: 160,
       },
@@ -248,8 +276,8 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   let chordAt: ((tick: number) => Chord | undefined) | undefined;
   const planSkeleton = (a: number, b: number, keyAt: (t: number) => Key, closeOn: Key) => {
     if (!useSkeleton || b <= a) return;
-    harmony.push(...planHarmony(fixed, a, b, keyAt, s.beatsPerBar, { before: harmony[harmony.length - 1]?.chord, closeOn }));
-    chordAt = chordLookup(harmony);
+    harmony.push(...planHarmony(fixed, a, b, keyAt, grid, { before: harmony[harmony.length - 1]?.chord, closeOn }));
+    chordAt = chordLookup(harmony, grid.beat);
   };
 
   const writeLine = (v: number, a: number, b: number, keyAt: (t: number) => Key, role: Role, slots?: Slot[], allowedPcs?: number[]) => {
@@ -261,7 +289,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
       others.push(sounding(j, a - 1, b));
       rel.push(j < v ? 'below' : 'above');
     }
-    const sl = slots ?? complementaryRhythm(others, a, b, s.beatsPerBar, rng, { endLong: role === 'link' });
+    const sl = slots ?? complementaryRhythm(others, a, b, grid, rng, { endLong: role === 'link' });
     const line = generateLine(
       {
         slots: sl,
@@ -273,7 +301,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         targetPitch: nextFixedPitch(v, b),
         allowedPcs,
         chordAt: allowedPcs ? undefined : chordAt,
-        beatsPerBar: s.beatsPerBar,
+        grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
       },
       rng,
@@ -342,7 +370,10 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     order,
     countersubject: cs0,
     length,
-    beatsPerBar: s.beatsPerBar,
+    meter: grid.meter,
+    ticksPerQuarter: grid.ticksPerQuarter,
+    grid,
+    beatsPerBar: grid.bar / grid.ticksPerQuarter,
     harmony,
     keys,
   };

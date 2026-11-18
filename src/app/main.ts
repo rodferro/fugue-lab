@@ -1,20 +1,24 @@
 // App wiring: settings form, editor, generation, playback and export.
-import { Note, TPB, VOICE_SETS } from '../engine/model';
+import { COMMON_TIME, Note, TPB, VOICE_SETS, coarsestTicksPerQuarter, meterName, parseMeter, rescaleNotes, timeGrid } from '../engine/model';
 import { Key, Mode, keyName } from '../engine/theory';
 import { analyzeSubject } from '../engine/analyze';
-import { DEFAULT_SETTINGS, FugueResult, FugueSettings, generateFugue } from '../engine/fugue';
+import { DEFAULT_SETTINGS, FugueResult, FugueSettings, generateFugue, meterOf } from '../engine/fugue';
 import { voiceLeadingReport } from '../engine/report';
 import { writeMidi } from '../engine/midi';
 import { EXAMPLES } from './examples';
 import { Instrument, Player } from './audio';
-import { PianoRoll } from './pianoRoll';
+import { EDIT_TPQ, PianoRoll } from './pianoRoll';
 import { FugueView } from './fugueView';
 import { zipFiles } from './zip';
 
 interface AppState {
+  /** In ticks of settings.ticksPerQuarter, which is always EDIT_TPQ once loaded. */
   subject: Note[];
   bars: number;
+  /** New-note length in 16ths. */
   len: number;
+  /** Piano-roll snap step in EDIT_TPQ ticks (6 = a 16th). */
+  snap: number;
   bpm: number;
   instrument: Instrument;
   ghost: boolean;
@@ -24,30 +28,46 @@ interface AppState {
 const STORE = 'fugue-lab-v1';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-function load(): AppState | null {
+function load(): Partial<AppState> | null {
   try {
     const raw = localStorage.getItem(STORE);
-    return raw ? (JSON.parse(raw) as AppState) : null;
+    return raw ? migrate(JSON.parse(raw) as Partial<AppState>) : null;
   } catch {
     return null;
   }
+}
+
+/** Older saves have the subject on the 16th grid and a beatsPerBar number instead of a meter. */
+function migrate(raw: Partial<AppState>): Partial<AppState> {
+  const out = { ...raw };
+  if (out.settings) {
+    const old = out.settings as Partial<FugueSettings>;
+    const from = old.ticksPerQuarter ?? TPB;
+    if (out.subject && from !== EDIT_TPQ) out.subject = rescaleNotes(out.subject, from, EDIT_TPQ);
+    const { beatsPerBar: _legacy, ...rest } = old;
+    out.settings = { ...DEFAULT_SETTINGS, ...rest, meter: meterOf(old), ticksPerQuarter: EDIT_TPQ };
+  } else if (out.subject) out.subject = rescaleNotes(out.subject, TPB, EDIT_TPQ);
+  return out;
 }
 function save(s: AppState): void {
   try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* storage unavailable */ }
 }
 
 const fresh = (): AppState => ({
-  subject: EXAMPLES[0].notes.map((n) => ({ ...n })),
+  subject: rescaleNotes(EXAMPLES[0].notes, TPB, EDIT_TPQ),
   bars: EXAMPLES[0].bars,
   len: 2,
+  snap: 6,
   bpm: 76,
   instrument: 'harpsichord',
   ghost: true,
-  settings: { ...DEFAULT_SETTINGS },
+  settings: { ...DEFAULT_SETTINGS, ticksPerQuarter: EDIT_TPQ },
 });
 
 const state: AppState = { ...fresh(), ...(load() ?? {}) };
-state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
+state.settings = { ...DEFAULT_SETTINGS, ...state.settings, ticksPerQuarter: EDIT_TPQ };
+/** The editor's grid: EDIT_TPQ in the current meter. */
+const editGrid = () => timeGrid(EDIT_TPQ, state.settings.meter);
 
 const player = new Player();
 let result: FugueResult | null = null;
@@ -105,7 +125,10 @@ function syncForm(): void {
   setSegment('answerType', s.answerType);
   setSegment('len', String(state.len));
   ($('bars') as HTMLSelectElement).value = String(state.bars);
-  ($('meter') as HTMLSelectElement).value = String(s.beatsPerBar);
+  ($('meter') as HTMLSelectElement).value = meterName(s.meter);
+  ($('snap') as HTMLSelectElement).value = String(state.snap);
+  // Tempo counts beats: dotted quarters in x/8.
+  $('bpmUnit').textContent = s.meter.den === 8 ? '♩.' : '♩';
   ($('answerInterval') as HTMLSelectElement).value = s.answerInterval;
   ($('cs') as HTMLInputElement).checked = s.countersubject;
   ($('cadence') as HTMLInputElement).checked = s.cadence;
@@ -144,11 +167,12 @@ function regenerate(): void {
   save(state);
   const s = state.settings;
   roll.bars = state.bars;
-  roll.beatsPerBar = s.beatsPerBar;
-  roll.defaultLen = state.len;
+  roll.meter = s.meter;
+  roll.snap = state.snap;
+  roll.defaultLen = (state.len * EDIT_TPQ) / 4;
   roll.notes = state.subject.map((n) => ({ ...n }));
-  const analysis = analyzeSubject(state.subject, s.key ?? undefined);
-  const autoKey = analyzeSubject(state.subject).key;
+  const analysis = analyzeSubject(state.subject, s.key ?? undefined, EDIT_TPQ);
+  const autoKey = analyzeSubject(state.subject, undefined, EDIT_TPQ).key;
   buildKeySelect(autoKey);
   buildMutationSelect(analysis.autoMutation);
   const mutation = s.answerType === 'tonal' ? (s.mutation ?? analysis.autoMutation) : 0;
@@ -169,11 +193,14 @@ function regenerate(): void {
     buildOrderSelect(null);
     return;
   }
+  // Solve on the coarsest grid that holds the subject (4 per quarter for a
+  // 16th-grid subject, as before): same notes, less work.
+  const q = coarsestTicksPerQuarter(state.subject, EDIT_TPQ);
   const t0 = performance.now();
-  result = generateFugue(state.subject, s);
+  result = generateFugue(rescaleNotes(state.subject, EDIT_TPQ, q), { ...s, ticksPerQuarter: q });
   const ms = performance.now() - t0;
   buildOrderSelect(s.entryOrder ? null : result.order);
-  roll.ghost = state.ghost ? result.answer.notes : [];
+  roll.ghost = state.ghost ? rescaleNotes(result.answer.notes, q, EDIT_TPQ) : [];
   roll.resize();
 
   const dom = result.entries.find((e) => e.role === 'answer');
@@ -181,11 +208,11 @@ function regenerate(): void {
     chip('Key', keyName(result.key)),
     chip('Answer', `${s.answerType === 'tonal' ? 'Tonal' : 'Real'}${dom ? `, in ${keyName(dom.key)}` : ''}`),
     chip('Tonal head', s.answerType === 'tonal' ? (mutation ? `${mutation} note${mutation > 1 ? 's' : ''}` : 'none needed') : 'off', mutation && s.answerType === 'tonal' ? 'head' : ''),
-    chip('Length', `${(analysis.length / (TPB * s.beatsPerBar)).toFixed(analysis.length % (TPB * s.beatsPerBar) ? 2 : 0)} bars`),
+    chip('Length', `${(analysis.length / editGrid().bar).toFixed(analysis.length % editGrid().bar ? 2 : 0)} bars`),
   );
 
   // Unclassified: the chip counts every strong-beat dissonance, as before.
-  const issues = voiceLeadingReport(result.notes, { classify: false, keys: result.keys });
+  const issues = voiceLeadingReport(result.notes, { classify: false, keys: result.keys, ticksPerBeat: result.ticksPerQuarter, meter: result.meter });
   const count = (k: string) => issues.filter((i) => i.kind === k).length;
   const par = count('parallel5') + count('parallel8');
   const diss = count('strongDissonance');
@@ -247,7 +274,7 @@ function playSubject(): void {
   stop();
   if (!state.subject.length) return;
   playingWhat = 'subject';
-  player.play([{ notes: state.subject, pan: 0 }], state.bpm, state.instrument, 0, stop);
+  player.play([{ notes: state.subject, pan: 0 }], state.bpm, editGrid().beat, state.instrument, 0, stop);
   setPlaying();
   raf = requestAnimationFrame(loop);
 }
@@ -259,7 +286,7 @@ function playFugue(from = 0): void {
   const voices = result.notes
     .map((notes, i) => ({ notes, pan: n > 1 ? -0.45 + (0.9 * i) / (n - 1) : 0 }))
     .filter((_, i) => !view.muted[i]);
-  player.play(voices, state.bpm, state.instrument, from, () => { stop(); view.playhead = null; view.draw(); });
+  player.play(voices, state.bpm, result.grid.beat, state.instrument, from, () => { stop(); view.playhead = null; view.draw(); });
   setPlaying();
   raf = requestAnimationFrame(loop);
 }
@@ -278,10 +305,12 @@ type ClaudeHost = { use(name: string): Promise<unknown> };
 
 async function exportMidi(): Promise<void> {
   if (!result) return;
+  // The tempo slider counts beats; MIDI counts quarters.
   const midi = writeMidi(
     result.voices.map((v, i) => ({ name: v.name, notes: result!.notes[i], channel: i })),
-    state.bpm,
-    state.settings.beatsPerBar,
+    (state.bpm * result.ticksPerQuarter) / result.grid.beat,
+    result.meter,
+    result.ticksPerQuarter,
   );
   const host = (window as unknown as { claude?: ClaudeHost }).claude;
   if (host?.use) {
@@ -316,30 +345,35 @@ document.querySelectorAll<HTMLInputElement>('input[name="voices"]').forEach((r) 
 document.querySelectorAll<HTMLInputElement>('input[name="answerType"]').forEach((r) =>
   r.addEventListener('change', () => { settings().answerType = r.value as 'tonal' | 'real'; schedule(); }));
 document.querySelectorAll<HTMLInputElement>('input[name="len"]').forEach((r) =>
-  r.addEventListener('change', () => { state.len = Number(r.value); roll.defaultLen = state.len; save(state); }));
+  r.addEventListener('change', () => { state.len = Number(r.value); roll.defaultLen = (state.len * EDIT_TPQ) / 4; save(state); }));
 
 on('example', 'change', (e) => {
   const ex = EXAMPLES.find((x) => x.id === (e.target as HTMLSelectElement).value);
   if (!ex) return;
-  state.subject = ex.notes.map((n) => ({ ...n }));
+  state.subject = rescaleNotes(ex.notes, TPB, EDIT_TPQ);
   state.bars = ex.bars;
   settings().key = null;
   settings().mutation = null;
   settings().entryOrder = null;
-  settings().beatsPerBar = 4;
+  settings().meter = COMMON_TIME;
   (e.target as HTMLSelectElement).value = '';
   syncForm();
   regenerate();
   roll.center();
 });
 on('clear', 'click', () => { state.subject = []; settings().key = null; settings().mutation = null; schedule(); });
+/** Drop or shorten notes past the end of the editor (after a bar count or meter change). */
+function trimSubject(): void {
+  const max = state.bars * editGrid().bar;
+  state.subject = state.subject.filter((n) => n.start < max).map((n) => ({ ...n, dur: Math.min(n.dur, max - n.start) }));
+}
 on('bars', 'change', (e) => {
   state.bars = Number((e.target as HTMLSelectElement).value);
-  const max = state.bars * settings().beatsPerBar * TPB;
-  state.subject = state.subject.filter((n) => n.start < max).map((n) => ({ ...n, dur: Math.min(n.dur, max - n.start) }));
+  trimSubject();
   schedule();
 });
-on('meter', 'change', (e) => { settings().beatsPerBar = Number((e.target as HTMLSelectElement).value); schedule(); });
+on('meter', 'change', (e) => { settings().meter = parseMeter((e.target as HTMLSelectElement).value); trimSubject(); syncForm(); schedule(); });
+on('snap', 'change', (e) => { state.snap = Number((e.target as HTMLSelectElement).value); roll.snap = state.snap; roll.draw(); save(state); });
 on('key', 'change', (e) => {
   const v = (e.target as HTMLSelectElement).value;
   if (v === 'auto') settings().key = null;
