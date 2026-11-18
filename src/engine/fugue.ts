@@ -52,6 +52,8 @@ export interface FugueSettings {
   seed: number;
   /** Overrides for the texture's dissonance rewards (TEXTURE_REWARDS); for tuning experiments. */
   rewards?: Partial<DissonanceRewards>;
+  /** Overrides the chromatic-clash penalty (CHROMATIC_CLASH, 60 by default); for experiments. */
+  clashPenalty?: number;
 }
 
 export const DEFAULT_SETTINGS: FugueSettings = {
@@ -232,6 +234,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         invertible: true,
         grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
+        clashPenalty: s.clashPenalty,
         beam: 160,
       },
       rng,
@@ -303,6 +306,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         chordAt: allowedPcs ? undefined : chordAt,
         grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
+        clashPenalty: s.clashPenalty,
       },
       rng,
     );

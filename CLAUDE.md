@@ -148,7 +148,8 @@ voice of the pair. "Beat" below is `max(strongEvery, ticksPerBeat)`.
 
 - `chromaticClash` first: two forms of one scale degree (C against C♯ in D minor), an
   error like `unexplainedDissonance` (`DISSONANCE_ERRORS`; the summary's
-  `dissonanceErrors`). The generator charges 60 for one at any tick and never rewards it, and the
+  `dissonanceErrors`). The generator charges 60 for one at any tick (`settings.clashPenalty` overrides it;
+  chosen on the development split) and never rewards it, and the
   4-voice skeleton (`CHORD_CLASH`) avoids chords that hold another form of a fixed voice's degree.
 
 - Prepared (same pitch held or re-struck from a consonance with the other voice):

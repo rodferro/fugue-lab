@@ -95,6 +95,9 @@ export function generateCommand(req: unknown): CommandResult {
   if (settings.key !== undefined) settings.key = key(settings.key) ?? null;
   if (settings.meter !== undefined) settings.meter = meter(settings.meter, 'settings.meter');
   if (settings.beatsPerBar !== undefined) int(settings.beatsPerBar, 'settings.beatsPerBar', 1);
+  if (settings.clashPenalty !== undefined && !(typeof settings.clashPenalty === 'number' && Number.isFinite(settings.clashPenalty) && settings.clashPenalty >= 0)) {
+    throw new RequestError('settings.clashPenalty must be a number >= 0');
+  }
   if (settings.ticksPerQuarter !== undefined) {
     const q = int(settings.ticksPerQuarter, 'settings.ticksPerQuarter', 4);
     if (q % 4 || 480 % q) throw new RequestError('settings.ticksPerQuarter must be a multiple of 4 that divides 480 (4, 8, 12, 24, ...)');

@@ -43,6 +43,8 @@ export interface LineSpec {
   grid: TimeGrid | number;
   /** Overrides for DEFAULT_REWARDS. */
   rewards?: Partial<DissonanceRewards>;
+  /** Overrides CHROMATIC_CLASH, the cost of a chromatic clash at any tick; for experiments. */
+  clashPenalty?: number;
   beam?: number;
   noise?: number;
 }
@@ -77,7 +79,7 @@ const ORN_BEATS = 3;
  * one only when every alternative is worse. At 30, chord pull and voice-leading
  * costs outweighed it with chromatic subjects (BWV 869).
  */
-const CHROMATIC_CLASH = 60;
+export const CHROMATIC_CLASH = 60;
 /** Extra cost when a treated dissonance resolves into another dissonance (ours, or against a fixed voice's resolution). */
 const RESOLVE_INTO_DISSONANCE = 12;
 
@@ -217,6 +219,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
   const grids = contexts.map((voices, i) => buildGrid(voices, spec.relations?.[i], t0, t1));
   const center = (range[0] + range[1]) / 2;
   const R: DissonanceRewards = { ...DEFAULT_REWARDS, ...spec.rewards };
+  const CLASH = spec.clashPenalty ?? CHROMATIC_CLASH;
 
   // Precompute slice ticks per slot and alternative.
   const slices = slots.map((s) =>
@@ -296,7 +299,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           const suspendable = resolvable && diss && !clash && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev, key);
           if (clash) {
             if (t === s.start) startDiss = true;
-            cost += CHROMATIC_CLASH;
+            cost += CLASH;
           } else if (t === s.start) {
             if (diss) {
               startDiss = true;

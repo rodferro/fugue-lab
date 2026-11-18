@@ -350,3 +350,31 @@ that supersedes it, not by editing the old one.
 - Regression test in engine.test.ts: BWV 869's subject, 4 voices, Bach's entry
   order, 8 seeds, no chromatic clash and no skeleton chord contradicting a
   fixed voice's note on its beat.
+
+## 2026-11-18 (clash penalty re-checked on the development split)
+
+- **Why:** `CHROMATIC_CLASH` = 60 (previous entry) was picked on all 280
+  held-out requests, and 5 of the 8 clashes came from BWV 869 and 861, which
+  are in the test set (WTC I). Re-checked on the development split only
+  (WTC II + Art of Fugue: 36 subjects, 5 seeds, 180 requests; 85 in 3 voices
+  over 1080 bars, 95 in 4 voices over 1660 bars), built with fugue-research's
+  `subject_request` and `split_of` (the same 180 requests as `heldout --split
+  dev --seeds 5`). The test set was not looked at.
+- **`settings.clashPenalty`** overrides the penalty for experiments, like
+  `settings.rewards`; the default stays `CHROMATIC_CLASH` = 60.
+
+  | penalty | chromatic clashes | parallels | unexplained | strong-beat dissonance / bar, 3 v | 4 v |
+  |---|---|---|---|---|---|
+  | 30  | 1 (4 v) | 2 | 11 | 0.439 | 0.959 |
+  | 45  | 1 (4 v) | 1 | 6  | 0.420 | 0.943 |
+  | 60  | 0       | 1 | 9  | 0.440 | 0.994 |
+  | 100 | 0       | 1 | 15 | 0.448 | 0.950 |
+
+  Strong-beat dissonance counts every classified kind (treated, errors and
+  the clashes themselves).
+- **Chosen: 60**, the smallest of the values tried that leaves no chromatic
+  clash on the development set. Unchanged, so the choice is now independent of
+  the test set. The evidence is thin: one clash separates 45 from 60, and
+  values between them were not tried. Unexplained dissonances and the
+  dissonance rate move without a trend across the values (seed-level noise),
+  so they did not enter the choice.

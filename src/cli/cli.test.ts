@@ -95,3 +95,10 @@ test('report takes a meter for strong beats and bars', () => {
   assert.throws(() => reportCommand({ voices, meter: '6/8', ticksPerBeat: 3 }), /even/);
   assert.throws(() => reportCommand({ voices, meter: 'x' }), RequestError);
 });
+
+test('settings.clashPenalty overrides the chromatic-clash penalty; 60 is the default', () => {
+  const out = (settings: object) => json(generateCommand(json({ subject, settings: { voices: 4, seed: 3, ...settings } })).json).notes;
+  assert.deepEqual(out({ clashPenalty: 60 }), out({}));
+  assert.throws(() => generateCommand({ subject, settings: { clashPenalty: -1 } }), /clashPenalty/);
+  assert.throws(() => generateCommand({ subject, settings: { clashPenalty: 'high' } }), /clashPenalty/);
+});
