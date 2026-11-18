@@ -52,7 +52,7 @@ const IMPERFECT = [false, false, false, true, true, false, false, false, true, t
  * note was already sounding (held over or re-struck) and consonant just
  * before, so the dissonance comes from the other voice moving, and the
  * suspended note then moves directly a step down within two beats. This is
- * the definition voiceLeadingReport uses with `suspensions: true`.
+ * the report's suspension rule (voiceLeadingReport, 'suspension').
  * Our own suspensions are rewarded instead of penalized; the waived penalty
  * is carried on the beam node and charged if the next note does not resolve.
  * When a fixed voice is the one suspended, its resolution is known: the line

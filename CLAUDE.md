@@ -34,8 +34,8 @@ src/engine/            pure TS, no DOM — keep it that way (reusable in a worke
   harmony.ts           planHarmony: chord per beat from the fixed voices (DP), chordLookup
   counterpoint.ts      generateLine (beam search) + complementaryRhythm
   fugue.ts             generateFugue(subject, settings) → FugueResult (exposition planner/renderer)
-  report.ts            voiceLeadingReport(voices, opts): parallels, strong-beat dissonances,
-                       suspensions (opt-in), crossings; summarizeReport → counts per bar
+  report.ts            voiceLeadingReport(voices, opts): parallels, classified strong-beat
+                       dissonances, crossings; summarizeReport → counts per bar
   midi.ts              SMF type-1 writer
   engine.test.ts
 src/cli/               fugue-cli: the engine as JSON in / JSON out (not part of build-single)
@@ -61,7 +61,7 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
   strong-beat dissonance 22–30, unresolved weak dissonance 15–18, parallel
   perfects 45, crossings 24, melodic costs per interval, minor-key tendency
   tones, triad fit on strong beats. Prepared suspensions that resolve down by
-  step (same definition as the report's `suspensions: true`) get a small reward
+  step (same definition as the report's `suspension` kind) get a small reward
   instead of the strong-beat penalty; the waived penalty rides on the beam node
   (`suspDebt`, `fixedSusp`) and is charged if the resolution is not a step down
   to a consonance. `contexts` holds *alternative* textures the
@@ -113,14 +113,21 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 `npm run cli -- <generate|report|answer> [file|-] [--jsonl]`. Notes are integer-tick
 `{pitch, start, dur}`; `generate` is on the 16th grid, `report` takes `ticksPerBeat`,
 `beatsPerBar` and `strongEvery` so imported music (e.g. voice-separated Bach) can be
-measured at its own resolution. `suspensions: true` reports a prepared dissonance that
-resolves down by step (directly, within two beats) as `suspension` instead of
-`strongDissonance`. It is off by default. The generator now writes suspensions on
-purpose, so the 4-voice quality test reports with `suspensions: true` and counts only
-unprepared strong-beat dissonances, and a separate test checks that every suspension
-resolves to a consonance at a plausible density. Use it when comparing against real music. Not recognized
-yet: retardations (upward resolution), ornamented or delayed resolutions, and 4ths
-against the bass (P4 is treated as consonant everywhere).
+measured at its own resolution.
+
+Strong-beat dissonances are classified by default, first rule wins, trying either
+voice of the pair: `suspension` (same pitch held or re-struck from a consonance,
+resolves directly a step down within two beats), `passingTone` (struck on the beat,
+step in and step on in the same direction), `neighbourTone` (step in, step back to the
+same pitch), `appoggiatura` (leap in, step out), `chordalSeventh` (3+ distinct pitch
+classes sounding, all in one maj7/dom7/min7/ø7/°7 chord), else `unexplainedDissonance`.
+The neighbouring notes must join directly (no rests), and the next one start within two
+beats. Resolution consonance is not checked. `unexplainedDissonance` is the
+error metric. `classify: false` gives the old report: everything is `strongDissonance`,
+or `suspension` too with `suspensions: true`; the 4-voice quality test and the UI chip
+use it so their bounds keep their meaning. Not recognized yet: retardations (upward
+resolution), escape tones and cambiatas, ornamented or delayed resolutions, pedal
+points, and 4ths against the bass (P4 is treated as consonant everywhere).
 
 ## Checks before committing
 

@@ -2,7 +2,7 @@
 // the research harness. Run with `npm run cli -- <command> [file] [--jsonl]`.
 //
 //   generate  {subject, settings?, midi?, bpm?, report?}   exposition + report summary
-//   report    {voices, ticksPerBeat?, beatsPerBar?, strongEvery?, suspensions?}
+//   report    {voices, ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?}
 //   answer    {subject, key?, type?, mutation?}
 //
 // Notes are {pitch (MIDI), start, dur} in integer ticks; generate works on the

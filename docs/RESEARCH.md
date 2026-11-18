@@ -74,8 +74,9 @@ Automatic (via `fugue-cli report` / `answer`):
 
 1. Answer correctness against the real/tonal rules.
 2. Counterpoint violations per bar (parallels, strong-beat dissonances,
-   crossings), measured **relative to Bach's own rate**, not to zero, with
-   `suspensions: true`.
+   crossings), measured **relative to Bach's own rate**, not to zero. The
+   violation rate is `unexplainedDissonance` from the classified report
+   (default since 2026-11-18); the other classes are reported as style rates.
 3. Countersubject consistency across entries.
 4. Invertibility: does the countersubject work above and below the subject?
 5. Perplexity on held-out fugues (learned models only).
@@ -101,6 +102,7 @@ each pre-training stage on/off; beat-based vs. time-shift tokens.
 
 - [x] `fugue-cli` (generate / report / answer, `--jsonl` batch mode)
 - [x] Report works on any voices, at any grid resolution, with opt-in suspension detection
+- [x] Report classifies strong-beat dissonances (suspension, passing, neighbour, appoggiatura, chordal seventh, unexplained)
 - [x] Generator: reward prepared suspensions in `harmonic()` (CLAUDE.md weakness #2)
 - [ ] Tonal answer tail mutation (weakness #3), or restrict the test set and say so
 - [ ] Data pipeline keeps full resolution (32nds, compound meter); quantize only for engine metrics

@@ -53,6 +53,7 @@ function reportOptions(o: Obj): ReportOptions {
   const out: ReportOptions = {};
   if (o.ticksPerBeat !== undefined) out.ticksPerBeat = int(o.ticksPerBeat, 'ticksPerBeat', 1);
   if (o.strongEvery !== undefined) out.strongEvery = int(o.strongEvery, 'strongEvery', 1);
+  if (o.classify !== undefined) out.classify = o.classify !== false;
   if (o.suspensions !== undefined) out.suspensions = o.suspensions === true;
   return out;
 }
@@ -85,7 +86,7 @@ export function generateCommand(req: unknown): CommandResult {
   };
 }
 
-/** {voices: Note[][], ticksPerBeat?, beatsPerBar?, strongEvery?, suspensions?} → issues and per-bar summary. */
+/** {voices: Note[][], ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?} → issues and per-bar summary. */
 export function reportCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
   if (!Array.isArray(r.voices) || r.voices.length < 2) throw new RequestError('voices must be an array of at least two note arrays');

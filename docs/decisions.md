@@ -68,3 +68,35 @@ that supersedes it, not by editing the old one.
   tones and appoggiaturas. Classify strong-beat dissonances in the report
   before using it as the paper's violation rate, and don't tune the engine
   toward fewer of them until then.
+
+## 2026-11-18
+
+- **The report classifies strong-beat dissonances by default** (supersedes the
+  2026-11-16 "suspension detection is opt-in" entry; answers the 2026-11-17
+  "not yet an error metric" entry). Kinds, first rule wins: `suspension`,
+  `passingTone`, `neighbourTone`, `appoggiatura`, `chordalSeventh`,
+  `unexplainedDissonance`. Only `unexplainedDissonance` is the paper's
+  violation rate; the others are style rates to compare with Bach.
+  `classify: false` keeps the old `strongDissonance` (+ `suspensions`) output,
+  and the 4-voice quality test and the UI use it so their bounds stay
+  meaningful.
+- **Melodic rules before the chord rule.** A dissonance explained by its line
+  (suspension, passing, neighbour, appoggiatura) is reported as such even if
+  the sonority also fits a seventh chord: the voice leading is the more
+  specific explanation, and the chord rule is the loosest one.
+- **Chordal seventh needs 3+ distinct pitch classes**, all inside one maj7,
+  dom7, min7, half-diminished or diminished seventh chord on any root. Two
+  notes alone always fit some seventh chord, so they would explain every
+  2-voice dissonance. A diminished triad counts (a seventh chord without its
+  root). The report knows no key, so chords are not checked for being diatonic.
+- **No resolution-consonance check** for any kind, matching the suspension
+  rule; the engine's own tests check resolutions where it matters. Revisit if
+  Bach rates show too much landing in the explained classes.
+- **Generator, for reference** (4 examples × 20 seeds, per bar, 2/3/4 voices):
+  unexplained 0 / 0.002 / 0.013; suspension 0.09 / 0.27 / 0.53; neighbour
+  0.03 / 0.03 / 0.06; passing 0 / 0.004 / 0.02; appoggiatura 0 / 0.01 / 0.01;
+  chordal seventh 0 / 0 / 0.004. Classified totals equal the old
+  `strongDissonance` counts exactly.
+- **fugue-research picks the new kinds up as-is** (it iterates over the
+  summary's counts), but its `strongDissonance` column is now always 0. Pass
+  `classify: false` there to reproduce the 2026-11-17 reference rates.

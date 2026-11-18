@@ -82,8 +82,9 @@ test('4-voice free parts follow the skeleton and stay clean', () => {
         }
       }
       // Suspensions are written on purpose since they are rewarded in
-      // harmonic(); count only the unprepared or unresolved ones here.
-      const issues = voiceLeadingReport(f.notes, { suspensions: true });
+      // harmonic(); count every other strong-beat dissonance here (the
+      // unclassified report, so the bound keeps its meaning).
+      const issues = voiceLeadingReport(f.notes, { classify: false, suspensions: true });
       diss += issues.filter((i) => i.kind === 'strongDissonance').length;
       cross += issues.filter((i) => i.kind === 'crossing').length;
       runs++;

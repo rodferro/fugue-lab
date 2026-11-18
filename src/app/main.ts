@@ -184,7 +184,8 @@ function regenerate(): void {
     chip('Length', `${(analysis.length / (TPB * s.beatsPerBar)).toFixed(analysis.length % (TPB * s.beatsPerBar) ? 2 : 0)} bars`),
   );
 
-  const issues = voiceLeadingReport(result.notes);
+  // Unclassified: the chip counts every strong-beat dissonance, as before.
+  const issues = voiceLeadingReport(result.notes, { classify: false });
   const count = (k: string) => issues.filter((i) => i.kind === k).length;
   const par = count('parallel5') + count('parallel8');
   const diss = count('strongDissonance');

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EXAMPLES } from '../app/examples';
 import { generateFugue } from '../engine/fugue';
 import { makeAnswer } from '../engine/answer';
-import { voiceLeadingReport } from '../engine/report';
+import { ISSUE_KINDS, voiceLeadingReport } from '../engine/report';
 import { RequestError, answerCommand, generateCommand, reportCommand } from './commands';
 
 const subject = EXAMPLES.find((e) => e.id === 'd-minor')!.notes;
@@ -18,7 +18,7 @@ test('generate matches the engine and is deterministic', () => {
   assert.deepEqual(a.notes, json(generateFugue(subject, { voices: 3, seed: 5 }).notes));
   assert.equal(a.keyName, 'D minor');
   assert.equal(a.ticksPerBeat, 4);
-  assert.equal(a.report.counts.strongDissonance, a.issues.filter((i: { kind: string }) => i.kind === 'strongDissonance').length);
+  for (const k of ISSUE_KINDS) assert.equal(a.report.counts[k], a.issues.filter((i: { kind: string }) => i.kind === k).length, k);
 });
 
 test('generate can write a MIDI file', () => {

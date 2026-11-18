@@ -3,11 +3,33 @@
 // Works on any set of monophonic lines, generated or imported (e.g. a Bach
 // fugue split into voices). Grid resolution and strong-beat spacing are
 // options, so imported music with 32nds or triplets can be measured too.
+// Strong-beat dissonances are classified by how they are treated (suspension,
+// passing, neighbour, appoggiatura, chordal seventh, unexplained), so that
+// only the unexplained ones need to count as errors.
 import { Note, TPB, noteEnd, sortNotes } from './model';
 
-export type IssueKind = 'parallel5' | 'parallel8' | 'strongDissonance' | 'suspension' | 'crossing';
+/**
+ * Strong-beat dissonances, classified. In order of precedence (the first
+ * rule that explains the dissonance wins, trying either voice of the pair):
+ * suspension, passing tone, neighbour tone, appoggiatura, chordal seventh;
+ * anything else is 'unexplainedDissonance'. With `classify: false` they are
+ * all 'strongDissonance' (or 'suspension' with `suspensions: true`) instead.
+ */
+export type DissonanceKind =
+  | 'suspension'
+  | 'passingTone'
+  | 'neighbourTone'
+  | 'appoggiatura'
+  | 'chordalSeventh'
+  | 'unexplainedDissonance';
 
-export const ISSUE_KINDS: IssueKind[] = ['parallel5', 'parallel8', 'strongDissonance', 'suspension', 'crossing'];
+export type IssueKind = 'parallel5' | 'parallel8' | 'strongDissonance' | DissonanceKind | 'crossing';
+
+export const DISSONANCE_KINDS: DissonanceKind[] = [
+  'suspension', 'passingTone', 'neighbourTone', 'appoggiatura', 'chordalSeventh', 'unexplainedDissonance',
+];
+
+export const ISSUE_KINDS: IssueKind[] = ['parallel5', 'parallel8', 'strongDissonance', ...DISSONANCE_KINDS, 'crossing'];
 
 export interface Issue {
   kind: IssueKind;
@@ -21,9 +43,14 @@ export interface ReportOptions {
   /** Ticks between the metrically strong points checked for dissonance. Default: every beat. */
   strongEvery?: number;
   /**
-   * Report a prepared dissonance that resolves down by step as 'suspension'
-   * instead of 'strongDissonance'. Off by default, so the generator's own
-   * quality tests keep counting every strong-beat dissonance.
+   * Classify every strong-beat dissonance (see DissonanceKind). Default true.
+   * false gives the old report: every strong-beat dissonance is
+   * 'strongDissonance', except suspensions when `suspensions` is set.
+   */
+  classify?: boolean;
+  /**
+   * Only with `classify: false`: report a prepared dissonance that resolves
+   * down by step as 'suspension' instead of 'strongDissonance'.
    */
   suspensions?: boolean;
 }
@@ -72,6 +99,68 @@ function isSuspension(x: LineGrid, y: LineGrid, t: number, window: number): bool
   return step === 1 || step === 2;
 }
 
+const isStep = (d: number): boolean => d !== 0 && Math.abs(d) <= 2;
+
+/**
+ * The melodic shape around the note voice `x` strikes at strong tick `t`, if
+ * it is an accented non-chord tone: the note starts at `t`, the previous note
+ * leads directly into it, and the next note follows directly within `window`
+ * ticks. Passing: step in, step on in the same direction. Neighbour: step in,
+ * step back to the previous pitch. Appoggiatura: leap in (3+ semitones), step
+ * out. Whether the note it moves to is consonant is not checked (as for
+ * suspensions).
+ */
+function accentedNonChordTone(x: LineGrid, t: number, window: number): 'passingTone' | 'neighbourTone' | 'appoggiatura' | null {
+  const k = x.at[t];
+  if (k < 1) return null;
+  const n = x.notes[k];
+  const prev = x.notes[k - 1];
+  const next = x.notes[k + 1];
+  if (n.start !== t || noteEnd(prev) !== t || !next || next.start !== noteEnd(n) || next.start > t + window) return null;
+  const into = n.pitch - prev.pitch;
+  const out = next.pitch - n.pitch;
+  if (!isStep(out)) return null;
+  if (isStep(into)) {
+    if (Math.sign(into) === Math.sign(out)) return 'passingTone';
+    if (next.pitch === prev.pitch) return 'neighbourTone';
+    return null;
+  }
+  return Math.abs(into) >= 3 ? 'appoggiatura' : null;
+}
+
+/** Root-position pitch-class shapes of the seventh chords: maj7, dom7, min7, half-diminished, diminished. */
+const SEVENTH_CHORDS = [[0, 4, 7, 11], [0, 4, 7, 10], [0, 3, 7, 10], [0, 3, 6, 10], [0, 3, 6, 9]];
+
+/**
+ * Do the pitch classes sounding at `t` (all voices) fit one seventh chord?
+ * Needs at least three distinct pitch classes: two notes alone fit some
+ * seventh chord whatever they are, so they explain nothing. A diminished
+ * triad counts (a seventh chord without its root).
+ */
+function fitsSeventhChord(grid: LineGrid[], t: number): boolean {
+  const pcs = new Set<number>();
+  for (const g of grid) {
+    const p = pitchAt(g, t);
+    if (p >= 0) pcs.add(p % 12);
+  }
+  if (pcs.size < 3) return false;
+  for (let root = 0; root < 12; root++) {
+    for (const shape of SEVENTH_CHORDS) {
+      const chord = shape.map((i) => (root + i) % 12);
+      if ([...pcs].every((pc) => chord.includes(pc))) return true;
+    }
+  }
+  return false;
+}
+
+function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: number, window: number): DissonanceKind {
+  if (isSuspension(a, b, t, window) || isSuspension(b, a, t, window)) return 'suspension';
+  const shapes = [accentedNonChordTone(a, t, window), accentedNonChordTone(b, t, window)];
+  for (const kind of ['passingTone', 'neighbourTone', 'appoggiatura'] as const) if (shapes.includes(kind)) return kind;
+  if (fitsSeventhChord(grid, t)) return 'chordalSeventh';
+  return 'unexplainedDissonance';
+}
+
 export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): Issue[] {
   const tpb = opts.ticksPerBeat ?? TPB;
   const strong = opts.strongEvery ?? tpb;
@@ -95,8 +184,10 @@ export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): 
           if (now === 0 && before === 0) issues.push({ kind: 'parallel8', tick: t, voices: [i, j] });
         }
         if (t % strong === 0 && dissonant(pa, pb)) {
-          const susp = opts.suspensions && (isSuspension(a, b, t, window) || isSuspension(b, a, t, window));
-          issues.push({ kind: susp ? 'suspension' : 'strongDissonance', tick: t, voices: [i, j] });
+          let kind: IssueKind;
+          if (opts.classify ?? true) kind = classifyDissonance(grid, a, b, t, window);
+          else kind = opts.suspensions && (isSuspension(a, b, t, window) || isSuspension(b, a, t, window)) ? 'suspension' : 'strongDissonance';
+          issues.push({ kind, tick: t, voices: [i, j] });
         }
         if (pa < pb) issues.push({ kind: 'crossing', tick: t, voices: [i, j] });
       }
@@ -109,6 +200,7 @@ export interface ReportSummary {
   /** Length of the texture in ticks. */
   length: number;
   bars: number;
+  /** Every kind, 0 when absent (with classification on, 'strongDissonance' is always 0). */
   counts: Record<IssueKind, number>;
   /** Counts divided by bars, rounded to 3 decimals; the comparable number across pieces. */
   perBar: Record<IssueKind, number>;
