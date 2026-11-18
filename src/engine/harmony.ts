@@ -2,7 +2,7 @@
 // already fixed (entries, countersubject) before any free voice is written.
 // Free voices then aim at the same chord instead of each guessing its own.
 import { Note, TimeGrid, noteEnd, toTimeGrid } from './model';
-import { Key, mod12, sameKey, scaleOf } from './theory';
+import { Key, chromaticClash, mod12, sameKey, scaleOf } from './theory';
 
 export interface Chord {
   /** Pitch classes (absolute), ordered root, third, fifth and optionally seventh. */
@@ -52,6 +52,13 @@ function candidatesOf(key: Key): ChordCandidate[] {
   return out;
 }
 
+/**
+ * A chord holding another form of a degree a fixed voice sounds (G♯ in the
+ * chord while the answer has G♮) would pull the free voices into a chromatic
+ * clash, which `generateLine` charges 30 for but chord pull can outweigh.
+ */
+const CHORD_CLASH = 20;
+
 // Cost of moving the root up by this many scale steps (0 = same root).
 const ROOT_MOTION = [0, 0.5, 1.0, -0.9, 0.3, 0.2, 0.9];
 
@@ -82,6 +89,7 @@ function fitCost(fixed: Note[][], t: number, dur: number, c: ChordCandidate, gri
       if (a >= b) continue;
       const pc = mod12(n.pitch);
       const inChord = c.pcs.includes(pc);
+      if (!inChord && c.pcs.some((q) => chromaticClash(n.pitch, q, c.key))) cost += CHORD_CLASH;
       if (a === t) {
         // Sounding on the beat: this is what the chord has to explain.
         if (inChord) present.add(pc);

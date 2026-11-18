@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EXAMPLES } from '../app/examples';
 import { autoMutation, detectKey } from './analyze';
 import { makeAnswer } from './answer';
-import { generateFugue } from './fugue';
+import { DEFAULT_SETTINGS, generateFugue } from './fugue';
 import { planHarmony } from './harmony';
 import { writeMidi } from './midi';
 import { voiceLeadingReport } from './report';
@@ -241,4 +241,32 @@ test('an early ^5 reached by a leap gets the tonal answer; one reached by step d
   assert.equal(autoMutation(s887, { tonic: 8, mode: 'minor' }), 0);
   const s882 = n([[65, 0, 1], [63, 1, 1], [65, 2, 1], [66, 3, 2], [61, 5, 2], [63, 7, 1]]);
   assert.equal(autoMutation(s882, { tonic: 6, mode: 'major' }), 0);
+});
+
+// Bach, WTC I, Fugue in B minor BWV 869: chromatic sighing pairs (A♯–B, E–D♯, C♮, F♮…).
+// Its answer sounds G♮ in F♯ minor, and the skeleton used to put G♯ in the chord
+// there, pulling a free voice into a chromatic clash (4 of 5 seeds in the held-out run).
+const BWV869 = [
+  [66, 2, 2], [62, 4, 2], [59, 6, 2], [67, 8, 2], [66, 10, 2], [71, 12, 2], [70, 14, 2], [64, 16, 2], [63, 18, 2], [72, 20, 2],
+  [71, 22, 2], [66, 24, 2], [65, 26, 2], [74, 28, 2], [73, 30, 2], [72, 32, 2], [73, 34, 2], [69, 36, 2], [66, 38, 2], [68, 40, 8],
+].map(([pitch, start, dur]) => ({ pitch, start, dur }));
+
+test('chromatic subject (BWV 869): no chromatic clashes, and the skeleton never contradicts a fixed voice', () => {
+  for (let seed = 1; seed <= 8; seed++) {
+    const f = generateFugue(BWV869, {
+      ...DEFAULT_SETTINGS, voices: 4, seed, entryOrder: [1, 2, 3, 0], key: { tonic: 11, mode: 'minor' }, cadence: false, codettaBars: 0,
+    });
+    const clashes = voiceLeadingReport(f.notes, { keys: f.keys }).filter((i) => i.kind === 'chromaticClash');
+    assert.deepEqual(clashes, [], `seed ${seed}`);
+    for (const b of f.harmony) {
+      for (const v of f.notes) {
+        for (const x of v) {
+          if (x.role !== 'subject' && x.role !== 'answer' && x.role !== 'countersubject') continue;
+          if (x.start !== b.start) continue;
+          const bad = b.chord.pcs.find((q) => chromaticClash(x.pitch, q, b.chord.key));
+          assert.equal(bad, undefined, `seed ${seed}: ${b.chord.label} at ${b.start} against fixed pitch ${x.pitch}`);
+        }
+      }
+    }
+  }
 });

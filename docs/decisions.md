@@ -320,3 +320,33 @@ that supersedes it, not by editing the old one.
   and their `beatsPerBar` becomes a meter. The tempo slider counts beats
   (♩. in x/8); MIDI gets the quarter-note tempo, the real time signature
   (clocks per click 36 in x/8) and 480 PPQ at any grid that divides it.
+
+## 2026-11-18 (chromatic clashes with chromatic subjects)
+
+- **The clashes were not between two fixed voices.** fugue-research's held-out
+  run found chromatic clashes only with chromatic subjects (BWV 869, 861,
+  Contrapunctus XVIII and XIX), and the guess was the transposed
+  countersubject against an entry. Regenerating all 280 held-out requests
+  (56 subjects × 5 seeds) on the current engine gave 8 clashes, every one
+  involving a free voice or a link: free against answer (3), against
+  countersubject (2), against subject (1), free against link (2). The
+  countersubject's placement was left alone.
+- **Cause 1, the skeleton.** In BWV 869 the answer sounds G♮ in F♯ minor (the
+  subject's C♮), and `planHarmony` chose VII (E–G♯–B) on that beat: `fitCost`
+  saw G♮ as an ordinary non-chord tone. The free voice was then pulled to G♯.
+  `fitCost` now adds `CHORD_CLASH` = 20 when a fixed note overlapping the beat
+  is another form of a chord tone's degree. 8 → 3 clashes.
+- **Cause 2, the penalty.** The other three were beam-search trade-offs where
+  chord pull and voice-leading costs outweighed `CHROMATIC_CLASH` = 30.
+  Raised to **60**: above any other single fault (downbeat dissonance 30,
+  parallel perfect 45), since a clash is an error, not a style choice. This is
+  a rule, not a fit: 45 left 2, 60 and 100 left none, and 60 is the smallest
+  value tried that clears them. 3 → 0 clashes; held-out parallels 3 → 1,
+  unexplained dissonances 16 → 14.
+- **Drift on the built-in examples** (4 examples × 10 seeds; 52 of 120 fugues
+  change): clashes and unexplained stay at 0 / 0 / 0.006 per bar for 2 / 3 / 4
+  voices; suspensions 0.280 → 0.275, 0.575 → 0.582, 0.686 → 0.719; passing
+  tones 0.189 → 0.204 (3 voices), 0.253 → 0.261 (4 voices). Rewards not retuned.
+- Regression test in engine.test.ts: BWV 869's subject, 4 voices, Bach's entry
+  order, 8 seeds, no chromatic clash and no skeleton chord contradicting a
+  fixed voice's note on its beat.

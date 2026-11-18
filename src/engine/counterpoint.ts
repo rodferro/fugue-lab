@@ -72,10 +72,12 @@ const SUSP_BEATS = 2;
 const ORN_BEATS = 3;
 /**
  * Two forms of one scale degree sounding together (C against C♯ in D minor),
- * at any tick: never treated or rewarded, and at least as costly as an
- * unprepared strong-beat dissonance on the downbeat.
+ * at any tick: never treated or rewarded, and dearer than any other single
+ * fault (downbeat dissonance 30, parallel perfect 45), so the search accepts
+ * one only when every alternative is worse. At 30, chord pull and voice-leading
+ * costs outweighed it with chromatic subjects (BWV 869).
  */
-const CHROMATIC_CLASH = 30;
+const CHROMATIC_CLASH = 60;
 /** Extra cost when a treated dissonance resolves into another dissonance (ours, or against a fixed voice's resolution). */
 const RESOLVE_INTO_DISSONANCE = 12;
 
