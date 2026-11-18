@@ -249,3 +249,29 @@ that supersedes it, not by editing the old one.
   2026-11-18 rates drifted: 3 voices suspension 0.541, ornamented 0.130,
   passing 0.229, retardation 0.032; 4 voices suspension 0.592, ornamented
   0.117, passing 0.172, retardation 0.035. Retune if the drift matters.
+
+## 2026-11-18 (held-out tuning)
+
+- **Development/test split for everything tuned from now on.** fugue-research's
+  held-out test (Bach's subjects through the engine) uses WTC II + Art of
+  Fugue as the development set and WTC I (validated against Algomus) as the
+  test set. Tune on development only; report test.
+- **`autoMutation` also mutates an early ^5 leapt to from ^1, in a subject that
+  starts on ^1** (C B C G, BWV 847; F E F C, BWV 880). Agreement with Bach's
+  answers: development 16 → 17 of 30, test 13 → 14 of 20, no regressions.
+  The window is the first 5 notes (`AUTO_MUTATION_WINDOW`).
+- **4-voice rewards retuned on the development set:** suspension 3.6,
+  ornamented suspension 6.3, retardation −1.2, passing tone −2.2 (was 2.1,
+  3.3, −4.2, −3.7). On the test set, 4-voice strong-beat dissonance goes from
+  1.08 to 1.49 per bar against Bach's 1.64, suspensions from 0.53 to 0.80
+  (Bach 0.80), squared-error loss 0.40 → 0.06.
+- **3-voice rewards unchanged.** The development-tuned value (suspension 2.5)
+  fits the development set exactly but puts an augmented second (B♭ under C♯)
+  on bar 6 beat 2 of the D minor default, which the regression test for the
+  dissonance you heard there forbids. (It also did worse on the test set,
+  0.022 → 0.061, but the decision rests on the regression test.) The
+  development set's 3-voice fugues are much lighter than WTC I's (0.48 vs
+  0.90 per bar): one set of rewards can't fit both, which argues for a
+  subject-dependent (learned) score.
+- **`FugueSettings.rewards`** overrides the texture's rewards, for tuning
+  experiments (fugue-research `heldout --rewards`).

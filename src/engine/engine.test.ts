@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EXAMPLES } from '../app/examples';
-import { detectKey } from './analyze';
+import { autoMutation, detectKey } from './analyze';
 import { makeAnswer } from './answer';
 import { generateFugue } from './fugue';
 import { planHarmony } from './harmony';
@@ -224,4 +224,21 @@ test('generated parts never sound a chromatic clash, on any tick', () => {
       }
     }
   }
+});
+
+test('an early ^5 reached by a leap gets the tonal answer; one reached by step does not', () => {
+  const n = (rows: [number, number, number][]) => rows.map(([pitch, start, dur]) => ({ pitch, start, dur }));
+  const cMinor = { tonic: 0, mode: 'minor' as const };
+  // BWV 847: C B C G Ab ... answered G F# G C Eb (Bach).
+  const s847 = n([[72, 0, 1], [71, 1, 1], [72, 2, 2], [67, 4, 2], [68, 6, 2], [72, 8, 1]]);
+  assert.equal(autoMutation(s847, cMinor), 4);
+  assert.deepEqual(makeAnswer(s847, cMinor, 'tonal', 4).notes.slice(0, 5).map((x) => mod12(x.pitch)), [7, 6, 7, 0, 3]);
+  // BWV 846: C D E F G ... is answered really.
+  const s846 = n([[60, 2, 2], [62, 4, 2], [64, 6, 2], [65, 8, 2], [67, 10, 1], [65, 11, 1]]);
+  assert.equal(autoMutation(s846, { tonic: 0, mode: 'major' }), 0);
+  // BWV 887 leaps to ^5 from ^2; BWV 882 starts on ^7: both answered really.
+  const s887 = n([[68, 0, 1], [70, 1, 1], [71, 2, 1], [70, 3, 1], [75, 4, 2], [75, 6, 2]]);
+  assert.equal(autoMutation(s887, { tonic: 8, mode: 'minor' }), 0);
+  const s882 = n([[65, 0, 1], [63, 1, 1], [65, 2, 1], [66, 3, 2], [61, 5, 2], [63, 7, 1]]);
+  assert.equal(autoMutation(s882, { tonic: 6, mode: 'major' }), 0);
 });

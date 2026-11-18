@@ -51,15 +51,37 @@ export function detectKey(notes: Note[]): KeyCandidate[] {
  * Notes in the head get the tonal mapping (^1→^5, ^5→^1); the rest is
  * transposed exactly. Returns 0 when no tonal adjustment is needed.
  */
+/** How far into the subject an early, leapt-to ^5 still counts as part of the head. */
+export const AUTO_MUTATION_WINDOW = 5;
+
 export function autoMutation(notes: Note[], key: Key): number {
   const sorted = sortNotes(notes);
+  const sps = sorted.map((n) => toScalePitch(n.pitch, key));
+  const isTonicOrFifth = (k: number) => sps[k].acc === 0 && (sps[k].deg === 0 || sps[k].deg === 4);
   let i = 0;
   let sawFifth = false;
-  while (i < sorted.length) {
-    const sp = toScalePitch(sorted[i].pitch, key);
-    if (sp.acc !== 0 || (sp.deg !== 0 && sp.deg !== 4)) break;
-    if (sp.deg === 4) sawFifth = true;
+  while (i < sorted.length && isTonicOrFifth(i)) {
+    if (sps[i].deg === 4) sawFifth = true;
     i++;
+  }
+  if (!sawFifth) {
+    // A subject that starts on ^1 and leaps from ^1 to an early ^5 outlines the
+    // tonic-dominant frame too, so it also gets the tonal answer (C B C G, BWV 847;
+    // F E F C, BWV 880): the head runs through that ^5 and any ^1/^5 directly
+    // after it. A ^5 reached by step (C D E F G, BWV 846), from another degree
+    // (BWV 887), or in a subject that doesn't start on ^1 (BWV 882) keeps the
+    // real answer, as Bach's do.
+    i = 0;
+    const startsOnTonic = sps.length > 0 && sps[0].acc === 0 && sps[0].deg === 0;
+    for (let k = 1; startsOnTonic && k < Math.min(sorted.length, AUTO_MUTATION_WINDOW); k++) {
+      const fromTonic = sps[k - 1].acc === 0 && sps[k - 1].deg === 0;
+      if (sps[k].acc === 0 && sps[k].deg === 4 && fromTonic && Math.abs(sorted[k].pitch - sorted[k - 1].pitch) >= 3) {
+        i = k + 1;
+        while (i < sorted.length && isTonicOrFifth(i)) i++;
+        sawFifth = true;
+        break;
+      }
+    }
   }
   if (!sawFifth) return 0;
   // A head that swallows the whole subject is just a tonic–dominant figure.

@@ -10,14 +10,16 @@ import { Chord, SkeletonBeat, chordLookup, planHarmony } from './harmony';
 
 /**
  * Rewards for treated strong-beat dissonances, per number of voices (see
- * DissonanceRewards in counterpoint.ts). Tuned so the report's rates approach
- * Bach's 4/4 fugue openings; values and reasons in docs/decisions.md.
+ * DissonanceRewards in counterpoint.ts). 2-3 voices: tuned to Bach's 4/4 fugue
+ * openings. 4 voices: tuned on the development split of fugue-research's
+ * held-out test (WTC II + Art of Fugue), checked on WTC I. Values and reasons
+ * in docs/decisions.md.
  */
 export const TEXTURE_REWARDS: Record<2 | 3 | 4, Partial<DissonanceRewards>> = {
   // Thinner textures need more pull to write as many suspensions and passing tones per bar.
   2: { suspension: 4, ornamentedSuspension: 5.7, retardation: 0.6, passingTone: -1, chordalSeventh: 1 },
   3: { suspension: 4, ornamentedSuspension: 5.7, retardation: 0.6, passingTone: -1, chordalSeventh: 1 },
-  4: { suspension: 2.1, ornamentedSuspension: 3.3, retardation: -4.2, passingTone: -3.7, chordalSeventh: 1 },
+  4: { suspension: 3.6, ornamentedSuspension: 6.3, retardation: -1.2, passingTone: -2.2, chordalSeventh: 1 },
 };
 
 export interface FugueSettings {
@@ -39,6 +41,8 @@ export interface FugueSettings {
   picardy: boolean;
   beatsPerBar: number;
   seed: number;
+  /** Overrides for the texture's dissonance rewards (TEXTURE_REWARDS); for tuning experiments. */
+  rewards?: Partial<DissonanceRewards>;
 }
 
 export const DEFAULT_SETTINGS: FugueSettings = {
@@ -199,7 +203,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         relations: [['above'], ['above']],
         invertible: true,
         beatsPerBar: s.beatsPerBar,
-        rewards: TEXTURE_REWARDS[n as 2 | 3 | 4],
+        rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
         beam: 160,
       },
       rng,
@@ -270,7 +274,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         allowedPcs,
         chordAt: allowedPcs ? undefined : chordAt,
         beatsPerBar: s.beatsPerBar,
-        rewards: TEXTURE_REWARDS[n as 2 | 3 | 4],
+        rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
       },
       rng,
     );
