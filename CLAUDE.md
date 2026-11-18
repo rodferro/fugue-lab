@@ -134,3 +134,4 @@ points, and 4ths against the bass (P4 is treated as consonant everywhere).
 `npm run typecheck && npm test`, and `npm run build:single` if the artifact build matters.
 The test "generated parts avoid parallel fifths and octaves" is the quality
 guard — don't loosen it to make a change pass.
+The default branch is main (tracking origin/main). Merge finished work into main; never create a master branch.
