@@ -104,6 +104,7 @@ each pre-training stage on/off; beat-based vs. time-shift tokens.
 - [x] Report works on any voices, at any grid resolution, with opt-in suspension detection
 - [x] Report classifies strong-beat dissonances (suspension, ornamented suspension, retardation, passing, neighbour, appoggiatura, escape tone, anticipation, pedal point, chordal seventh, unexplained)
 - [x] Generator: reward prepared suspensions in `harmonic()` (CLAUDE.md weakness #2)
+- [x] Generator: reward ornamented suspensions, retardations, accented passing tones and chordal sevenths, calibrated to Bach's 4/4 rates (2026-11-18)
 - [ ] Tonal answer tail mutation (weakness #3), or restrict the test set and say so
 - [ ] Data pipeline keeps full resolution (32nds, compound meter); quantize only for engine metrics
 

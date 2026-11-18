@@ -4,9 +4,21 @@ import { Note, Role, TPB, VNote, VOICE_SETS, VoiceDef, lengthOf, makeMonophonic,
 import { Key, dominantOf, tonicTriad } from './theory';
 import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
-import { Relation, Slot, complementaryRhythm, generateLine } from './counterpoint';
+import { DissonanceRewards, Relation, Slot, complementaryRhythm, generateLine } from './counterpoint';
 import { Rng, makeRng } from './rng';
 import { Chord, SkeletonBeat, chordLookup, planHarmony } from './harmony';
+
+/**
+ * Rewards for treated strong-beat dissonances, per number of voices (see
+ * DissonanceRewards in counterpoint.ts). Tuned so the report's rates approach
+ * Bach's 4/4 fugue openings; values and reasons in docs/decisions.md.
+ */
+export const TEXTURE_REWARDS: Record<2 | 3 | 4, Partial<DissonanceRewards>> = {
+  // Thinner textures need more pull to write as many suspensions and passing tones per bar.
+  2: { suspension: 4, ornamentedSuspension: 5.7, retardation: 0.6, passingTone: -1, chordalSeventh: 1 },
+  3: { suspension: 4, ornamentedSuspension: 5.7, retardation: 0.6, passingTone: -1, chordalSeventh: 1 },
+  4: { suspension: 2.1, ornamentedSuspension: 3.3, retardation: -4.2, passingTone: -3.7, chordalSeventh: 1 },
+};
 
 export interface FugueSettings {
   voices: 2 | 3 | 4;
@@ -180,6 +192,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         relations: [['above'], ['above']],
         invertible: true,
         beatsPerBar: s.beatsPerBar,
+        rewards: TEXTURE_REWARDS[n as 2 | 3 | 4],
         beam: 160,
       },
       rng,
@@ -250,6 +263,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         allowedPcs,
         chordAt: allowedPcs ? undefined : chordAt,
         beatsPerBar: s.beatsPerBar,
+        rewards: TEXTURE_REWARDS[n as 2 | 3 | 4],
       },
       rng,
     );

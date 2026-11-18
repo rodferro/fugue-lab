@@ -130,3 +130,75 @@ that supersedes it, not by editing the old one.
 - **Generator, for reference** (4 examples × 20 seeds, per bar, 2/3/4 voices):
   unexplained now 0 / 0 / 0.001 (was 0 / 0.002 / 0.013); the new kinds are
   rare (each ≤ 0.011). Totals still equal the old `strongDissonance` counts.
+- **The generator rewards five treated-dissonance kinds, with rewards per
+  texture tuned to Bach's 4/4 openings** (supersedes "Suspension reward is
+  hand-set" and "SUSP_REWARD = 1 stays for now"; targets from fugue-research
+  `results/2026-11-18-classifier-v2.md`). `harmonic()` now treats a strong-beat
+  dissonance of the line as a suspension (prepared), an accented passing tone
+  (struck by step) or a chordal seventh (the line's note is the seventh of a
+  3+ pitch-class seventh chord, on the skeleton root when there is one). The
+  waived penalty becomes an `Obligation` on the beam node: a suspension is
+  resolved by a step down, a step up (retardation) or one decorating note and
+  then the step down from the suspended pitch within three beats (ornamented
+  suspension); a passing tone by a step on in the same direction; a seventh by
+  a step down. Otherwise the debt (waived penalty plus reward) is charged.
+  Values (`TEXTURE_REWARDS` in fugue.ts; negative = net cost, still far below
+  the 16–30 penalty it replaces):
+
+  | reward | 2 and 3 voices | 4 voices |
+  |---|---|---|
+  | suspension | 4 | 2.1 |
+  | ornamentedSuspension | 5.7 | 3.3 |
+  | retardation | 0.6 | −4.2 |
+  | passingTone | −1 | −3.7 |
+  | chordalSeventh | 1 | 1 |
+  | againstSuspension (fixed voice suspended) | 0.5 | 0.5 |
+
+  Result, report per bar, 4 examples × 20 seeds (target in brackets):
+
+  | | 3 voices | 4 voices |
+  |---|---|---|
+  | suspension (0.55) | 0.525 (was 0.268) | 0.571 (was 0.533) |
+  | ornamented suspension (0.15) | 0.150 (0.002) | 0.140 (0.007) |
+  | passing tone (0.19) | 0.189 (0.004) | 0.176 (0.022) |
+  | retardation (0.05) | 0.037 (0.004) | 0.039 (0.006) |
+  | chordal seventh (0.05) | 0 (0) | 0.004 (0) |
+  | unexplained (≤ 0.045 / ≤ 0.02) | 0 (0) | 0.003 (0.001) |
+  | neighbour (Bach 0.045 / 0.083) | 0.002 | 0.024 |
+  | appoggiatura (Bach 0.076 / 0.046) | 0.036 | 0.075 |
+
+  2 voices (no target) use the 3-voice values: suspension 0.23, passing 0.07,
+  unexplained 0. Parallels: 1 in 240 fugues over 20 seeds (4 voices); the
+  parallel-fifths guard test is unchanged and passes.
+- **Why per texture.** One reward set can't fit both: a suspension reward that
+  gives Bach's 3-voice rate overshoots 4 voices by about half (0.86 per bar),
+  and 3-voice passing tones needed a much smaller net cost (−1 vs −4) to
+  appear at all. Uniform rewards flood the texture with passing tones (1.1
+  per bar in 4 voices at +1).
+- **The chordal-seventh target is not met, by construction.** A seventh that
+  resolves down by step always has a melodic shape the report checks first
+  (prepared → suspension, step in → passing or neighbour, leap in →
+  appoggiatura), so the report labels it that way. The reward does write
+  sevenths: in the tuning runs (4 voices, before the resolution surcharge
+  below), turning it on took dissonances fitting a seventh chord from 0.42 to
+  0.48 per bar, neighbours from 0.042 to 0.069 and appoggiaturas from 0.013 to
+  0.029 (both toward Bach's), while `chordalSeventh` went from 0.001 to 0.003. Bach's 0.05–0.07 are
+  sevenths with no melodic explanation (left by leap, or after a rest), which
+  the resolution rule forbids. Kept at 1; changing the report's precedence or
+  the rule is a separate decision.
+- **Resolving into another dissonance costs `RESOLVE_INTO_DISSONANCE` = 12
+  on top of the debt**, and so does a line note dissonant with a fixed voice
+  that resolves a held-over note down by step. Without it about 1% of
+  prepared dissonances (10 of 977) resolved against a clash, mostly the
+  countersubject's suspension resolving against a free voice's weak-beat
+  figure; with it 2 of 939, in the 20-seed sweep, none in the test's seeds.
+- **Quality tests follow the classified report.** The 4-voice test now bounds
+  `unexplainedDissonance` at ≤ 0.02 per bar (Bach's rate, replacing "< 1.5
+  non-suspension dissonances per fugue", which would count the passing tones
+  and sevenths written on purpose), and leaves on-beat notes that are treated
+  dissonances out of the chord-tone share (still > 0.75). A new test bounds
+  3-voice unexplained at ≤ 0.045. The resolution test now also covers
+  ornamented suspensions and retardations and requires both to appear.
+- **Cost: generation is about 3× slower** (4 voices 17 → 47 ms, 3 voices 9 →
+  23 ms), because obligations keep more distinct states in the beam. Still
+  within the main-thread budget (CLAUDE.md weakness #5).

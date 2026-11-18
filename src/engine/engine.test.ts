@@ -66,63 +66,82 @@ test('harmonic skeleton explains the fixed notes', () => {
   assert.deepEqual(sk.map((b) => b.chord.label), ['I', 'I', 'I', 'I', 'V', 'V', 'V', 'V']);
 });
 
+// Strong-beat dissonances generateLine writes on purpose (rewarded in harmonic()).
+const TREATED = new Set(['suspension', 'ornamentedSuspension', 'retardation', 'passingTone', 'neighbourTone', 'appoggiatura', 'chordalSeventh']);
+
 test('4-voice free parts follow the skeleton and stay clean', () => {
-  let onBeat = 0, inChord = 0, diss = 0, cross = 0, runs = 0;
+  let onBeat = 0, inChord = 0, unexplained = 0, cross = 0, runs = 0, bars = 0;
   for (const e of EXAMPLES) {
     for (let seed = 1; seed <= 6; seed++) {
       const f = generateFugue(e.notes, { voices: 4, seed });
       const expEnd = f.sections[0].end;
       assert.equal(f.harmony.length, expEnd / TPB, 'one chord per beat of the exposition');
+      const issues = voiceLeadingReport(f.notes, { beatsPerBar: f.beatsPerBar });
+      // A free note that is a treated dissonance is a non-chord tone on purpose.
+      const treated = new Set(issues.filter((i) => TREATED.has(i.kind)).flatMap((i) => i.voices.map((v) => `${v}@${i.tick}`)));
       for (const b of f.harmony) {
-        for (const line of f.notes) {
+        f.notes.forEach((line, v) => {
           const n = line.find((x) => x.start <= b.start && noteEnd(x) > b.start);
-          if (!n || (n.role !== 'free' && n.role !== 'link')) continue;
+          if (!n || (n.role !== 'free' && n.role !== 'link') || treated.has(`${v}@${b.start}`)) return;
           onBeat++;
           if (b.chord.pcs.includes(mod12(n.pitch))) inChord++;
-        }
+        });
       }
-      // Suspensions are written on purpose since they are rewarded in
-      // harmonic(); count every other strong-beat dissonance here (the
-      // unclassified report, so the bound keeps its meaning).
-      const issues = voiceLeadingReport(f.notes, { classify: false, suspensions: true });
-      diss += issues.filter((i) => i.kind === 'strongDissonance').length;
+      unexplained += issues.filter((i) => i.kind === 'unexplainedDissonance').length;
       cross += issues.filter((i) => i.kind === 'crossing').length;
+      bars += f.length / (TPB * f.beatsPerBar);
       runs++;
     }
   }
-  assert.ok(inChord / onBeat > 0.75, `only ${inChord}/${onBeat} free on-beat notes are chord tones`);
-  // Before the skeleton these averaged about 2.7 and 0.7 per fugue (with
-  // suspensions counted as dissonances); with the skeleton about 1.2.
-  assert.ok(diss / runs < 1.5, `${(diss / runs).toFixed(2)} unprepared strong-beat dissonances per fugue`);
+  assert.ok(inChord / onBeat > 0.75, `only ${inChord}/${onBeat} free on-beat notes (not treated dissonances) are chord tones`);
+  // Bach's 4-voice 4/4 openings: 0.018 unexplained per bar.
+  assert.ok(unexplained / bars <= 0.02, `${(unexplained / bars).toFixed(3)} unexplained strong-beat dissonances per bar`);
   assert.ok(cross / runs < 0.5, `${(cross / runs).toFixed(2)} crossings per fugue`);
 });
 
-test('generated suspensions resolve down by step to a consonance', () => {
+test('3-voice expositions stay at or below Bach\'s unexplained rate', () => {
+  let unexplained = 0, bars = 0;
+  for (const e of EXAMPLES) {
+    for (let seed = 1; seed <= 6; seed++) {
+      const f = generateFugue(e.notes, { voices: 3, seed });
+      unexplained += voiceLeadingReport(f.notes, { beatsPerBar: f.beatsPerBar }).filter((i) => i.kind === 'unexplainedDissonance').length;
+      bars += f.length / (TPB * f.beatsPerBar);
+    }
+  }
+  // Bach's 3-voice 4/4 openings: 0.045 per bar.
+  assert.ok(unexplained / bars <= 0.045, `${(unexplained / bars).toFixed(3)} unexplained strong-beat dissonances per bar`);
+});
+
+test('generated suspensions, ornamented suspensions and retardations resolve to a consonance', () => {
   const DISS = new Set([1, 2, 6, 10, 11]);
   const at = (line: { pitch: number; start: number; dur: number }[], t: number) => line.find((n) => n.start <= t && noteEnd(n) > t);
   let count = 0, bars = 0;
+  const seen: Record<string, number> = {};
   for (const e of EXAMPLES) {
     for (const voices of [3, 4] as const) {
       for (let seed = 1; seed <= 4; seed++) {
         const f = generateFugue(e.notes, { voices, seed });
         bars += f.length / (TPB * f.beatsPerBar);
-        for (const i of voiceLeadingReport(f.notes, { suspensions: true })) {
-          if (i.kind !== 'suspension') continue;
-          count++;
+        for (const i of voiceLeadingReport(f.notes, { beatsPerBar: f.beatsPerBar })) {
+          if (i.kind !== 'suspension' && i.kind !== 'ornamentedSuspension' && i.kind !== 'retardation') continue;
+          seen[i.kind] = (seen[i.kind] ?? 0) + 1;
+          if (i.kind === 'suspension') count++;
           // The suspended voice is the one that holds its pitch into the beat.
           const [a, b] = i.voices.map((v) => f.notes[v]);
           const held = at(a, i.tick - 1)?.pitch === at(a, i.tick)!.pitch && at(b, i.tick - 1)?.pitch !== at(b, i.tick)!.pitch;
           const [sus, other] = held ? [a, b] : [b, a];
           const n = at(sus, i.tick)!;
-          const r = sus.find((x) => x.start === noteEnd(n))!;
+          let r = sus.find((x) => x.start === noteEnd(n))!;
+          if (i.kind === 'ornamentedSuspension') r = sus.find((x) => x.start === noteEnd(r))!; // past the decoration
           const o = at(other, r.start);
-          assert.ok(!o || !DISS.has(Math.abs(r.pitch - o.pitch) % 12), `${e.id} ${voices}v seed ${seed}: suspension at ${i.tick} resolves to a dissonance`);
+          assert.ok(!o || !DISS.has(Math.abs(r.pitch - o.pitch) % 12), `${e.id} ${voices}v seed ${seed}: ${i.kind} at ${i.tick} resolves to a dissonance`);
         }
       }
     }
   }
   // They are written on purpose now, but should not be everywhere.
   assert.ok(count / bars > 0.1 && count / bars < 0.8, `${(count / bars).toFixed(2)} suspensions per bar`);
+  assert.ok(seen.ornamentedSuspension > 0 && seen.retardation > 0, `ornamented ${seen.ornamentedSuspension ?? 0}, retardations ${seen.retardation ?? 0}`);
 });
 
 test('MIDI header: format 1, one track per voice plus the conductor, 480 ticks per quarter', () => {

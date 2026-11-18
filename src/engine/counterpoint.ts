@@ -40,6 +40,8 @@ export interface LineSpec {
    */
   chordAt?: (tick: number) => Chord | undefined;
   beatsPerBar: number;
+  /** Overrides for DEFAULT_REWARDS. */
+  rewards?: Partial<DissonanceRewards>;
   beam?: number;
   noise?: number;
 }
@@ -48,20 +50,71 @@ const DISSONANT = [false, true, true, false, false, false, true, false, false, f
 const IMPERFECT = [false, false, false, true, true, false, false, false, true, true, false, false];
 
 /**
- * Suspensions. A strong-beat dissonance is a suspension when the dissonant
- * note was already sounding (held over or re-struck) and consonant just
- * before, so the dissonance comes from the other voice moving, and the
- * suspended note then moves directly a step down within two beats. This is
- * the report's suspension rule (voiceLeadingReport, 'suspension').
- * Our own suspensions are rewarded instead of penalized; the waived penalty
- * is carried on the beam node and charged if the next note does not resolve.
- * When a fixed voice is the one suspended, its resolution is known: the line
+ * Treated strong-beat dissonances, using the report's definitions
+ * (voiceLeadingReport). Instead of the strong-beat penalty they earn a
+ * reward, and the waived penalty rides on the beam node as an Obligation,
+ * charged if the following note(s) do not resolve it to a consonance:
+ * - suspension: the note was already sounding and consonant just before
+ *   (held over or re-struck). Resolved by a step down (suspension), a step up
+ *   (retardation), or one decorating note and then the step down from the
+ *   suspended pitch within three beats (ornamented suspension).
+ * - passing: struck on the beat by step from the previous note; resolved by
+ *   a step on in the same direction.
+ * - seventh: the sounding notes form a seventh chord (3+ pitch classes) with
+ *   the line's note as its seventh, on the skeleton's root when there is one;
+ *   resolved by a step down.
+ * When a fixed voice is the suspended one, its resolution is known: the line
  * moving into the dissonance is not penalized, but the waived penalty is
  * charged if the line is dissonant with the resolution note when it arrives.
  */
 const SUSP_WINDOW = 2 * TPB;
-const SUSP_REWARD = 1;
-const SUSP_AGAINST_REWARD = 0.5;
+const ORN_WINDOW = 3 * TPB;
+/** Extra cost when a treated dissonance resolves into another dissonance (ours, or against a fixed voice's resolution). */
+const RESOLVE_INTO_DISSONANCE = 12;
+
+/** Rewards (cost subtracted) for each treated dissonance; see the comment above. */
+export interface DissonanceRewards {
+  suspension: number;
+  ornamentedSuspension: number;
+  retardation: number;
+  passingTone: number;
+  chordalSeventh: number;
+  /** The line moving against a fixed voice's suspension. */
+  againstSuspension: number;
+}
+
+/**
+ * The 4-voice values (fugue.ts TEXTURE_REWARDS overrides them per texture).
+ * Negative values are net costs, still far below the 16–30 penalty they replace.
+ */
+export const DEFAULT_REWARDS: DissonanceRewards = {
+  suspension: 2.1,
+  ornamentedSuspension: 3.3,
+  retardation: -4.2,
+  passingTone: -3.7,
+  chordalSeventh: 1,
+  againstSuspension: 0.5,
+};
+
+/** Root-position shapes of the seventh chords, as in the report: maj7, dom7, min7, half-diminished, diminished. */
+const SEVENTH_SHAPES = [[0, 4, 7, 11], [0, 4, 7, 10], [0, 3, 7, 10], [0, 3, 6, 10], [0, 3, 6, 9]];
+
+type ObligationKind = 'suspension' | 'ornament' | 'passing' | 'seventh';
+
+/** What the next note owes a treated dissonance in the last one. */
+interface Obligation {
+  kind: ObligationKind;
+  /** The dissonant pitch; for 'ornament', the suspended pitch the resolution steps down from. */
+  from: number;
+  /** 'passing': the direction to keep moving in. */
+  dir: number;
+  /** Tick of the dissonance. */
+  tick: number;
+  /** Voices whose dissonance it explains (each was rewarded once). */
+  n: number;
+  /** Penalty waived plus rewards given: charged if the obligation is not met. */
+  debt: number;
+}
 
 interface Grid {
   t0: number;
@@ -98,8 +151,8 @@ interface BeamNode {
   runLen: number;
   /** Direction a dissonant passing note must keep moving in (0 = any step), or null. */
   pending: number | null;
-  /** Penalty waived for a suspension in the last note, charged unless the next note resolves it. */
-  suspDebt: number;
+  /** A treated dissonance in the last note that the next one must resolve. */
+  ob: Obligation | null;
   /** A fixed voice's suspension the line moved against: where it resolves, and the waived penalty. */
   fixedSusp: FixedSusp | null;
 }
@@ -151,6 +204,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
   const t1 = noteEnd(slots[slots.length - 1]);
   const grids = contexts.map((voices, i) => buildGrid(voices, spec.relations?.[i], t0, t1));
   const center = (range[0] + range[1]) / 2;
+  const R: DissonanceRewards = { ...DEFAULT_REWARDS, ...spec.rewards };
 
   // Precompute slice ticks per slot and alternative.
   const slices = slots.map((s) =>
@@ -161,17 +215,19 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     }),
   );
 
-  function harmonic(p: number, prevP: number | null, si: number, key: Key): { cost: number; weakDiss: boolean; startDiss: boolean; suspDebt: number; fixedSusp: FixedSusp | null } {
+  function harmonic(p: number, prevP: number | null, si: number, key: Key): { cost: number; weakDiss: boolean; startDiss: boolean; ob: Obligation | null; fixedSusp: FixedSusp | null } {
     const s = slots[si];
     let cost = 0;
     let weakDiss = false;
-    let suspDebt = 0;
     let startDiss = false;
+    let ob: Obligation | null = null;
     let fixedSusp: FixedSusp | null = null;
     const chords = chordsOf(key);
     const end = s.start + s.dur;
     const heldIn = si > 0 && noteEnd(slots[si - 1]) === s.start && prevP !== null;
     const canResolve = si + 1 < slots.length && slots[si + 1].start === end;
+    // Struck by step from a directly preceding note: can be an accented passing tone.
+    const steppedIn = heldIn && p !== prevP && Math.abs(p - prevP!) <= 2;
     for (let gi = 0; gi < grids.length; gi++) {
       const g = grids[gi];
       for (const t of slices[si][gi]) {
@@ -182,8 +238,10 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         const strong = t % TPB === 0;
         const downbeat = t % bar === 0;
         const chord = strong ? spec.chordAt?.(t) : undefined;
+        const resolvable = strong && canResolve && end <= t + SUSP_WINDOW;
+        const seventh = resolvable && isChordSeventh(g, ti, p, chord);
         let outOfChord = 0;
-        let suspended = false;
+        let explained = false;
         if (chord) {
           const pc = mod12(p);
           const idx = chord.pcs.indexOf(pc);
@@ -201,6 +259,17 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           cost += outOfChord;
           continue;
         }
+        /** Treat this voice's strong-beat dissonance as `kind` if it fits the slot's obligation. */
+        const treat = (kind: ObligationKind, base: number): boolean => {
+          if (ob && ob.kind !== kind) return false;
+          const r = kind === 'suspension' ? R.suspension : kind === 'passing' ? R.passingTone : R.chordalSeventh;
+          cost -= r;
+          if (!ob) ob = { kind, from: p, dir: kind === 'passing' ? Math.sign(p - prevP!) : -1, tick: t, n: 0, debt: 0 };
+          ob.n++;
+          ob.debt += base + r;
+          explained = true;
+          return true;
+        };
         for (let vi = 0; vi < g.pitch.length; vi++) {
           const o = g.pitch[vi][ti];
           if (o < 0) continue;
@@ -210,23 +279,23 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           // with the voice there, resolvable by the next slot within the window.
           // Fourths only as 4–3 (line above); fifths are never suspensions.
           const oPrev = ti > 0 ? g.pitch[vi][ti - 1] : -1;
-          const suspendable = strong && diss && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev) &&
-            canResolve && end <= t + SUSP_WINDOW;
+          const suspendable = resolvable && diss && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev);
           if (t === s.start) {
             if (diss) {
               startDiss = true;
               if (strong) {
                 const base = downbeat ? 30 : 22;
-                if (suspendable && heldIn && prevP === p) {
+                if (suspendable && heldIn && prevP === p && treat('suspension', base)) {
                   // re-struck suspension
-                  cost -= SUSP_REWARD;
-                  suspDebt += base + SUSP_REWARD;
-                  suspended = true;
+                } else if (resolvable && steppedIn && ic !== 7 && treat('passing', base)) {
+                  // accented passing tone
+                } else if (seventh && treat('seventh', base)) {
+                  // chordal seventh
                 } else {
                   const res: { tick: number; pitch: number } | null = heldIn && !fixedSusp ? fixedResolution(g, vi, ti, prevP!) : null;
                   if (res) {
-                    cost -= SUSP_AGAINST_REWARD;
-                    fixedSusp = { ...res, debt: base + SUSP_AGAINST_REWARD };
+                    cost -= R.againstSuspension;
+                    fixedSusp = { ...res, debt: base + R.againstSuspension };
                   } else cost += base;
                 }
               } else weakDiss = true;
@@ -244,20 +313,20 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
               }
             }
           } else if (diss) {
-            if (suspendable) {
-              // held-over suspension
-              cost -= SUSP_REWARD;
-              suspDebt += 16 + SUSP_REWARD;
-              suspended = true;
-            } else cost += strong ? 16 : 2.5;
+            // held over the beat while this voice moves
+            if (!(strong && ((suspendable && treat('suspension', 16)) || (seventh && treat('seventh', 16))))) {
+              cost += strong ? 16 : 2.5;
+            }
           }
+          // A fixed voice resolving a held-over note down by step here: stay consonant with it.
+          if (diss && g.onset[vi][ti] && fixedResolvesHere(g, vi, ti)) cost += RESOLVE_INTO_DISSONANCE;
           const r = g.rel[vi];
           if (r === 'above' && p <= o) cost += 24;
           if (r === 'below' && p >= o) cost += 24;
           if (r && Math.abs(p - o) > (spec.invertible ? 16 : 19)) cost += 2;
         }
-        if (!suspended) cost += outOfChord;
-        if (strong && count >= 3 && !chord && !suspended) {
+        if (!explained) cost += outOfChord;
+        if (strong && count >= 3 && !chord && !explained) {
           const pcs = new Set<number>([mod12(p)]);
           for (const v of g.pitch) if (v[ti] >= 0) pcs.add(mod12(v[ti]));
           const fits = chords.some((c) => [...pcs].every((x) => c.includes(x)));
@@ -265,7 +334,26 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         }
       }
     }
-    return { cost, weakDiss, startDiss, suspDebt, fixedSusp };
+    return { cost, weakDiss, startDiss, ob, fixedSusp };
+  }
+
+  /**
+   * Is `p` the seventh of a seventh chord formed with the notes sounding at
+   * slice `ti`? Needs 3+ pitch classes; on the skeleton chord's root if given.
+   */
+  function isChordSeventh(g: Grid, ti: number, p: number, chord: Chord | undefined): boolean {
+    const pcs = new Set<number>([mod12(p)]);
+    for (const v of g.pitch) if (v[ti] >= 0) pcs.add(mod12(v[ti]));
+    if (pcs.size < 3) return false;
+    const roots = chord ? [chord.pcs[0]] : [...Array(12).keys()];
+    for (const root of roots) {
+      for (const shape of SEVENTH_SHAPES) {
+        if (mod12(p - root) !== shape[3]) continue;
+        const tones = shape.map((i) => mod12(root + i));
+        if ([...pcs].every((pc) => tones.includes(pc))) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -285,12 +373,29 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     return fall === 1 || fall === 2 ? { tick: u + g.t0, pitch: v[u] } : null;
   }
 
+  /**
+   * Does fixed voice `vi` arrive at slice `ti` by a step down from a note it
+   * held across the previous strong beat (the shape of a suspension's
+   * resolution)?
+   */
+  function fixedResolvesHere(g: Grid, vi: number, ti: number): boolean {
+    const v = g.pitch[vi];
+    if (ti < 1 || v[ti - 1] < 0) return false;
+    const fall = v[ti - 1] - v[ti];
+    if (fall !== 1 && fall !== 2) return false;
+    const beat = Math.floor((ti + g.t0 - 1) / TPB) * TPB - g.t0; // last strong tick before ti
+    // Sounding just before the beat and through it (held or re-struck), with no new note since.
+    if (beat < 1 || v[beat - 1] !== v[ti - 1] || v[beat] !== v[ti - 1]) return false;
+    for (let u = beat + 1; u < ti; u++) if (g.onset[vi][u]) return false;
+    return true;
+  }
+
   function dissAt(a: number, b: number): boolean {
     const ic = Math.abs(a - b) % 12;
     return DISSONANT[ic] || (!!spec.invertible && (ic === 5 || ic === 7));
   }
 
-  const root: BeamNode = { p: spec.startPitch ?? -1, prev: null, cost: 0, lastInt: 0, runDir: 0, runLen: 0, pending: null, suspDebt: 0, fixedSusp: null };
+  const root: BeamNode = { p: spec.startPitch ?? -1, prev: null, cost: 0, lastInt: 0, runDir: 0, runLen: 0, pending: null, ob: null, fixedSusp: null };
   let states: BeamNode[] = [root];
 
   for (let si = 0; si < slots.length; si++) {
@@ -316,10 +421,37 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         }
         const h = harmonic(p, prevP, si, key);
         cost += h.cost;
-        if (st.suspDebt > 0 && prevP !== null) {
-          // Resolved: a step down, consonant with everything where it lands.
-          const fall = prevP - p;
-          if ((fall !== 1 && fall !== 2) || h.startDiss) cost += st.suspDebt;
+        // The last note's treated dissonance: resolved here, or (a suspension)
+        // decorated once and resolved by the next note, or charged.
+        let carried: Obligation | null = null;
+        const o = st.ob;
+        if (o && prevP !== null) {
+          const move = p - prevP;
+          const ok = !h.startDiss;
+          // Landing the resolution on another dissonance is worse than not resolving.
+          if (h.startDiss) cost += RESOLVE_INTO_DISSONANCE;
+          const down = ok && (move === -1 || move === -2);
+          if (o.kind === 'suspension') {
+            if (down) {
+              // suspension
+            } else if (ok && (move === 1 || move === 2)) {
+              cost += o.n * (R.suspension - R.retardation); // retardation
+            } else if (si + 1 < slots.length && slots[si + 1].start === slotEnd && slotEnd <= o.tick + ORN_WINDOW) {
+              cost += o.n * (R.suspension - R.ornamentedSuspension);
+              carried = { ...o, kind: 'ornament', debt: o.debt + o.n * (R.ornamentedSuspension - R.suspension) };
+            } else cost += o.debt;
+          } else if (o.kind === 'ornament') {
+            const fall = o.from - p;
+            if (!(ok && (fall === 1 || fall === 2))) cost += o.debt;
+          } else if (o.kind === 'passing') {
+            if (!(ok && Math.sign(move) === o.dir && Math.abs(move) <= 2)) cost += o.debt;
+          } else if (!down) cost += o.debt; // seventh
+        }
+        // One obligation at a time: a dissonance on the decorating note itself is not treated.
+        let ob = h.ob;
+        if (carried) {
+          if (ob) cost += ob.debt;
+          ob = carried;
         }
         // Fixed voices' suspensions: charge the waived penalty if this note is
         // dissonant with the resolution; carry it on if it resolves later.
@@ -330,7 +462,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
             if (fixedSusp) cost += fs.debt; // only one is tracked; don't let the other go unchecked
             else fixedSusp = fs;
           }
-          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch)) cost += fs.debt;
+          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch)) cost += fs.debt + RESOLVE_INTO_DISSONANCE;
         }
         let pending: number | null = null;
         if (h.weakDiss) {
@@ -350,10 +482,10 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           runDir: dir,
           runLen: dir !== 0 && dir === st.runDir ? st.runLen + 1 : 1,
           pending,
-          suspDebt: h.suspDebt,
+          ob,
           fixedSusp,
         };
-        const sig = `${p}|${pending}|${Math.sign(d)}|${Math.abs(d) >= 5 ? 1 : 0}|${h.suspDebt > 0 ? 1 : 0}|${fixedSusp ? fixedSusp.tick : ''}`;
+        const sig = `${p}|${pending}|${Math.sign(d)}|${Math.abs(d) >= 5 ? 1 : 0}|${ob ? `${ob.kind}${ob.from}` : ''}|${fixedSusp ? fixedSusp.tick : ''}`;
         const old = next.get(sig);
         if (!old || old.cost > cost) next.set(sig, node);
       }
@@ -366,7 +498,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
   for (const st of states) {
     let c = st.cost;
     if (st.pending !== null) c += 16;
-    c += st.suspDebt;
+    if (st.ob) c += st.ob.debt;
     if (spec.targetPitch !== undefined) {
       const a = Math.abs(spec.targetPitch - st.p);
       c += a > 12 ? 8 : a === 6 || a === 10 || a === 11 ? 6 : a > 7 ? 4 : a > 4 ? 1.5 : 0;

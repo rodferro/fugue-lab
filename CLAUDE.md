@@ -60,11 +60,15 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 - `generateLine` scoring (in `counterpoint.ts`) is where musical quality lives:
   strong-beat dissonance 22–30, unresolved weak dissonance 15–18, parallel
   perfects 45, crossings 24, melodic costs per interval, minor-key tendency
-  tones, triad fit on strong beats. Prepared suspensions that resolve down by
-  step (same definition as the report's `suspension` kind) get a small reward
-  instead of the strong-beat penalty; the waived penalty rides on the beam node
-  (`suspDebt`, `fixedSusp`) and is charged if the resolution is not a step down
-  to a consonance. `contexts` holds *alternative* textures the
+  tones, triad fit on strong beats. Treated strong-beat dissonances (prepared
+  suspension → step down, retardation → step up, ornamented suspension → one
+  decoration then step down; accented passing tone; chordal seventh → step down)
+  get a reward from `DissonanceRewards` instead of the 16–30 penalty. The waived
+  penalty rides on the beam node as an `Obligation` (and `fixedSusp` for a fixed
+  voice's suspension) and is charged if the resolution doesn't come, plus
+  `RESOLVE_INTO_DISSONANCE` if it lands on a dissonance. Rewards are per texture
+  (`TEXTURE_REWARDS` in fugue.ts), tuned to Bach's 4/4 openings; see
+  docs/decisions.md before changing them. `contexts` holds *alternative* textures the
   line must satisfy at once (the countersubject uses subject + answer);
   `invertible` makes 4ths/5ths count as dissonant.
 - 4 voices only: `planHarmony` picks a chord per beat for each entry from the
@@ -86,13 +90,17 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
    from fixed voices only and ignores register/inversion; a joint beam search
    over the free voices, or letting the countersubject shift octave per beat
    group, would be the next step. 2- and 3-voice textures do not use the skeleton.
-2. ~~No suspensions~~ (done: rewarded in `harmonic()`). Still open: retardations
-   (upward resolution) and ornamented resolutions are penalized like any other
-   dissonance, and `SUSP_REWARD` is hand-set, not calibrated against Bach's rate.
+2. ~~No suspensions~~ (done: suspensions, retardations, ornamented suspensions,
+   accented passing tones and chordal sevenths are rewarded and calibrated against
+   Bach). Still open: neighbour tones and escape tones are not rewarded (the
+   engine writes fewer neighbours than Bach), and resolved chordal sevenths are
+   labelled by their melodic shape in the report, so its `chordalSeventh` rate stays
+   near 0.
 3. Tonal answer only handles a ^1/^5 head. Subjects that modulate to V need a
    tail mutation too; let the user drag the mutation marker in the roll.
 4. The countersubject can clash with the tonal head when the head is long.
-5. Generation runs on the main thread (~30–90 ms). Move to a Web Worker when
+5. Generation runs on the main thread (~25 ms for 3 voices, ~50 ms for 4, since
+   the treated-dissonance obligations fill the beam). Move to a Web Worker when
    episodes make it slower.
 
 ## Roadmap (milestones from the design discussion)
