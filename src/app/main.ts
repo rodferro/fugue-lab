@@ -185,7 +185,7 @@ function regenerate(): void {
   );
 
   // Unclassified: the chip counts every strong-beat dissonance, as before.
-  const issues = voiceLeadingReport(result.notes, { classify: false });
+  const issues = voiceLeadingReport(result.notes, { classify: false, keys: result.keys });
   const count = (k: string) => issues.filter((i) => i.kind === k).length;
   const par = count('parallel5') + count('parallel8');
   const diss = count('strongDissonance');

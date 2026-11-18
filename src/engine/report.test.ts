@@ -187,3 +187,45 @@ test('passing and neighbour tones allow a rest of up to an eighth next to them',
   const x2 = (ns: Note[]) => ns.map((n) => ({ pitch: n.pitch, start: n.start * 2, dur: n.dur * 2 }));
   assert.deepEqual(kinds([x2(line([[72, 0, 2], [74, 4, 4], [76, 8, 4]])), x2(heldC)], { ticksPerBeat: 8 }), ['passingTone@8']);
 });
+
+const DmKey = [{ start: 0, key: { tonic: 2, mode: 'minor' as const } }];
+
+test('chromatic clash: same degree, two forms, checked before every other rule', () => {
+  // A prepared C held over a C♯ arriving in the bass, resolving down by step:
+  // shaped like a suspension, but C against C♯ is a clash in D minor.
+  // (The bass stops before the resolution, so only the clash is reported.)
+  const upper = line([[72, 0, 8], [70, 8, 8]]);
+  const lower = line([[57, 0, 4], [61, 4, 4]]);
+  assert.deepEqual(kinds([upper, lower], { keys: DmKey }), ['chromaticClash@4']);
+  // Unclassified it is a plain strong-beat dissonance (11 semitones).
+  assert.deepEqual(kinds([upper, lower], { keys: DmKey, classify: false }), ['strongDissonance@4']);
+});
+
+test('augmented and diminished intervals are dissonant even when their semitones are not', () => {
+  // Soprano C♯ leapt to over alto F (an augmented 5th, 8 semitones), left by leap to A.
+  const sop = line([[64, 0, 4], [61, 4, 4], [69, 8, 4]]);
+  const alto = line([[53, 0, 12]]);
+  assert.deepEqual(kinds([sop, alto], { keys: DmKey }), ['unexplainedDissonance@4']);
+  assert.deepEqual(kinds([sop, alto], { keys: DmKey, classify: false }), ['strongDissonance@4']);
+  // In F major the same pitches are D♭ over F, a minor 6th: consonant.
+  assert.deepEqual(kinds([sop, alto], { keys: [{ start: 0, key: { tonic: 5, mode: 'major' } }] }), []);
+});
+
+test('key spans switch the spelling; without keys one key is detected', () => {
+  const sop = line([[64, 0, 4], [61, 4, 4], [69, 8, 4]]);
+  const alto = line([[53, 0, 12]]);
+  // D minor from tick 4 on: dissonant; F major until tick 8: consonant.
+  assert.deepEqual(kinds([sop, alto], { keys: [{ start: 0, key: { tonic: 5, mode: 'major' } }, { start: 4, key: { tonic: 2, mode: 'minor' } }] }), ['unexplainedDissonance@4']);
+  assert.deepEqual(kinds([sop, alto], { keys: [{ start: 0, key: { tonic: 2, mode: 'minor' } }, { start: 4, key: { tonic: 5, mode: 'major' } }] }), []);
+  // No keys: detected from the notes. C major material spells plain intervals as before.
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 4], [76, 8, 4]]), heldC]), ['passingTone@4']);
+});
+
+test('summary counts chromatic clashes and unexplained dissonances as errors', () => {
+  const upper = line([[72, 0, 8], [70, 8, 8]]);
+  const lower = line([[57, 0, 4], [61, 4, 4]]);
+  const s = summarizeReport(voiceLeadingReport([upper, lower], { keys: DmKey }), 16, 16);
+  assert.equal(s.counts.chromaticClash, 1);
+  assert.equal(s.dissonanceErrors, 1);
+  assert.equal(s.dissonanceErrorsPerBar, 1);
+});

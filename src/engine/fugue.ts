@@ -1,7 +1,7 @@
 // Exposition planner and renderer: places subject/answer entries, the
 // countersubject, free counterpoint, links between entries and a closing cadence.
 import { Note, Role, TPB, VNote, VOICE_SETS, VoiceDef, lengthOf, makeMonophonic, noteEnd, shiftTime, sortNotes, transpose } from './model';
-import { Key, dominantOf, tonicTriad } from './theory';
+import { Key, KeySpan, dominantOf, sameKey, tonicTriad } from './theory';
 import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
 import { DissonanceRewards, Relation, Slot, complementaryRhythm, generateLine } from './counterpoint';
@@ -88,6 +88,13 @@ export interface FugueResult {
   beatsPerBar: number;
   /** Chord per beat that the free voices were written to (4 voices only; otherwise empty). */
   harmony: SkeletonBeat[];
+  /**
+   * The key plan the voices were written in, as spans: each entry's key while
+   * the subject or answer sounds, then the next entry's key, the tonic for
+   * the cadence. Pass it to voiceLeadingReport (`keys`) so the report spells
+   * intervals the way the generator did.
+   */
+  keys: KeySpan[];
 }
 
 function outOfRange(notes: Note[], range: [number, number]): number {
@@ -271,10 +278,16 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   };
 
   // 3. Free counterpoint and links, in time order.
+  const keys: KeySpan[] = [];
+  const keyFrom = (start: number, k: Key) => {
+    if (!keys.length || !sameKey(keys[keys.length - 1].key, k)) keys.push({ start, key: k });
+  };
   for (let k = 0; k < n; k++) {
     const e = entries[k];
     const subEnd = e.start + subLen;
     const nextKey = k + 1 < n ? entries[k + 1].key : key;
+    keyFrom(e.start, e.key);
+    keyFrom(subEnd, nextKey);
     const keyAt = (tt: number) => (tt < subEnd ? e.key : nextKey);
     const csVoice = s.countersubject && k > 0 ? order[k - 1] : -1;
     const free = order.slice(0, k).filter((v) => v !== csVoice).sort((a, b) => a - b);
@@ -303,6 +316,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   const sections: Section[] = [{ start: 0, end: expEnd, label: 'Exposition' }];
   if (n > 2 && s.codettaBars > 0) sections.push({ start: entries[1].start + blockLen, end: entries[1].end, label: 'Codetta' });
   let length = expEnd;
+  keyFrom(expEnd, key);
   if (s.cadence) {
     const triad = tonicTriad(key, s.picardy && key.mode === 'minor');
     for (let v = n - 1; v >= 0; v--) {
@@ -326,5 +340,6 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     length,
     beatsPerBar: s.beatsPerBar,
     harmony,
+    keys,
   };
 }

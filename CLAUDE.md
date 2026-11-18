@@ -123,8 +123,18 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 `beatsPerBar` and `strongEvery` so imported music (e.g. voice-separated Bach) can be
 measured at its own resolution.
 
+Vertical intervals are spelled in the key (`theory.ts`: `spelledInterval`,
+`spelledDissonant`, `chromaticClash`), in the generator via `keyAt` and in the report
+via the `keys` option (`FugueResult.keys` for a generated fugue; one detected key when
+omitted). Consonant means unison/octave, 3rd (3–4 semitones), P4, P5 or 6th (8–9), so
+C♯–F or B♭–C♯ in D minor is dissonant. Parallels stay semitone-based.
+
 Strong-beat dissonances are classified by default, first rule wins, trying either
 voice of the pair. "Beat" below is `max(strongEvery, ticksPerBeat)`.
+
+- `chromaticClash` first: two forms of one scale degree (C against C♯ in D minor), an
+  error like `unexplainedDissonance` (`DISSONANCE_ERRORS`; the summary's
+  `dissonanceErrors`). The generator charges 30 for one at any tick and never rewards it.
 
 - Prepared (same pitch held or re-struck from a consonance with the other voice):
   `suspension` (next note directly a step down within two beats),
@@ -139,7 +149,7 @@ voice of the pair. "Beat" below is `max(strongEvery, ticksPerBeat)`.
 - Texture: `pedalPoint` (either voice holds its pitch for at least a bar of
   `beatsPerBar`, default 4; joined re-strikes count as held), `chordalSeventh` (3+
   distinct pitch classes sounding, all in one maj7/dom7/min7/ø7/°7 chord).
-- Else `unexplainedDissonance`, the error metric.
+- Else `unexplainedDissonance`, the other error.
 
 Resolution consonance is not checked. `classify: false` gives the old report:
 everything is `strongDissonance`, or `suspension` too with `suspensions: true`; the

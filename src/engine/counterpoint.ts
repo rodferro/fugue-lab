@@ -2,7 +2,7 @@
 // Every candidate pitch is scored against the voices already written
 // (harmonic rules) and against the line itself (melodic rules).
 import { Note, TPB, noteEnd } from './model';
-import { Key, chordsOf, mod12, usablePcs } from './theory';
+import { Key, chordsOf, chromaticClash, mod12, spelledDissonant, usablePcs } from './theory';
 import { Rng, pickWeighted } from './rng';
 import { Chord } from './harmony';
 
@@ -46,7 +46,6 @@ export interface LineSpec {
   noise?: number;
 }
 
-const DISSONANT = [false, true, true, false, false, false, true, false, false, false, true, true];
 const IMPERFECT = [false, false, false, true, true, false, false, false, true, true, false, false];
 
 /**
@@ -69,6 +68,12 @@ const IMPERFECT = [false, false, false, true, true, false, false, false, true, t
  */
 const SUSP_WINDOW = 2 * TPB;
 const ORN_WINDOW = 3 * TPB;
+/**
+ * Two forms of one scale degree sounding together (C against C♯ in D minor),
+ * at any tick: never treated or rewarded, and at least as costly as an
+ * unprepared strong-beat dissonance on the downbeat.
+ */
+const CHROMATIC_CLASH = 30;
 /** Extra cost when a treated dissonance resolves into another dissonance (ours, or against a fixed voice's resolution). */
 const RESOLVE_INTO_DISSONANCE = 12;
 
@@ -274,13 +279,18 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           const o = g.pitch[vi][ti];
           if (o < 0) continue;
           const ic = Math.abs(p - o) % 12;
-          const diss = DISSONANT[ic] || (ic === 5 && Math.min(p, o) === lowest) || (!!spec.invertible && (ic === 5 || ic === 7));
+          // Intervals are spelled in the key, so C♯–F (a diminished 4th) is dissonant though it spans a major 3rd.
+          const clash = chromaticClash(p, o, key);
+          const diss = clash || spelledDissonant(p, o, key) || (ic === 5 && Math.min(p, o) === lowest) || (!!spec.invertible && (ic === 5 || ic === 7));
           // Our note suspended against this voice: same pitch at t-1, consonant
           // with the voice there, resolvable by the next slot within the window.
           // Fourths only as 4–3 (line above); fifths are never suspensions.
           const oPrev = ti > 0 ? g.pitch[vi][ti - 1] : -1;
-          const suspendable = resolvable && diss && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev);
-          if (t === s.start) {
+          const suspendable = resolvable && diss && !clash && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev, key);
+          if (clash) {
+            if (t === s.start) startDiss = true;
+            cost += CHROMATIC_CLASH;
+          } else if (t === s.start) {
             if (diss) {
               startDiss = true;
               if (strong) {
@@ -292,7 +302,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
                 } else if (seventh && treat('seventh', base)) {
                   // chordal seventh
                 } else {
-                  const res: { tick: number; pitch: number } | null = heldIn && !fixedSusp ? fixedResolution(g, vi, ti, prevP!) : null;
+                  const res: { tick: number; pitch: number } | null = heldIn && !fixedSusp ? fixedResolution(g, vi, ti, prevP!, key) : null;
                   if (res) {
                     cost -= R.againstSuspension;
                     fixedSusp = { ...res, debt: base + R.againstSuspension };
@@ -361,11 +371,11 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
    * pitch from ti-1, the line's previous note was consonant with it, and it
    * moves directly a step down within the window. Returns the resolution.
    */
-  function fixedResolution(g: Grid, vi: number, ti: number, prevP: number): { tick: number; pitch: number } | null {
+  function fixedResolution(g: Grid, vi: number, ti: number, prevP: number, key: Key): { tick: number; pitch: number } | null {
     const v = g.pitch[vi];
     const on = g.onset[vi];
     const o = v[ti];
-    if (ti < 1 || v[ti - 1] !== o || dissAt(prevP, o)) return null;
+    if (ti < 1 || v[ti - 1] !== o || dissAt(prevP, o, key)) return null;
     let u = ti + 1;
     while (u < v.length && v[u] === o && !on[u]) u++;
     if (u >= v.length || u - ti > SUSP_WINDOW) return null;
@@ -390,9 +400,10 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     return true;
   }
 
-  function dissAt(a: number, b: number): boolean {
+  /** Dissonant as spelled in `key` (and 4ths/5ths too for invertible counterpoint). */
+  function dissAt(a: number, b: number, key: Key): boolean {
     const ic = Math.abs(a - b) % 12;
-    return DISSONANT[ic] || (!!spec.invertible && (ic === 5 || ic === 7));
+    return spelledDissonant(a, b, key) || chromaticClash(a, b, key) || (!!spec.invertible && (ic === 5 || ic === 7));
   }
 
   const root: BeamNode = { p: spec.startPitch ?? -1, prev: null, cost: 0, lastInt: 0, runDir: 0, runLen: 0, pending: null, ob: null, fixedSusp: null };
@@ -462,7 +473,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
             if (fixedSusp) cost += fs.debt; // only one is tracked; don't let the other go unchecked
             else fixedSusp = fs;
           }
-          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch)) cost += fs.debt + RESOLVE_INTO_DISSONANCE;
+          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch, key)) cost += fs.debt + RESOLVE_INTO_DISSONANCE;
         }
         let pending: number | null = null;
         if (h.weakDiss) {

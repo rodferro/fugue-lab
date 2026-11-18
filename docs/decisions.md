@@ -202,3 +202,50 @@ that supersedes it, not by editing the old one.
 - **Cost: generation is about 3× slower** (4 voices 17 → 47 ms, 3 voices 9 →
   23 ms), because obligations keep more distinct states in the beam. Still
   within the main-thread budget (CLAUDE.md weakness #5).
+
+## 2026-11-19
+
+- **Vertical intervals are spelled in the key, in the generator and the
+  report.** Two forms of one scale degree (same `deg` from `toScalePitch`,
+  different `acc`) and augmented or diminished intervals were treated by
+  semitone size: C against C♯ in D minor was an 11-semitone "seventh" the
+  generator could reward as a suspension, and C♯ over F an 8-semitone "minor
+  6th", consonant. Regression (D minor example, 3 voices, defaults): bar 5
+  beat 3 had alto C4 against bass C♯3 (rewarded and reported as an ornamented
+  suspension), bar 6 beat 2 soprano C♯4 against alto F3 (not reported at all);
+  `main` had the same kinds of clash elsewhere in that fugue. Consonant now
+  means unison/octave, 3rd (3 or 4 semitones), perfect 4th, perfect 5th or
+  6th (8 or 9); anything else, e.g. the diminished 4th C♯–F, the augmented 2nd
+  B♭–C♯ and the diminished 7th C♯–B♭, is dissonant. Helpers in `theory.ts`
+  (`spelledInterval`, `spelledDissonant`, `chromaticClash`, `KeySpan`,
+  `keyAtTick`).
+- **Generator: a chromatic clash costs 30 at any tick and is never treated.**
+  That is the unprepared downbeat penalty, the largest strong-beat one, and it
+  applies on weak ticks too, so a clash can't pass as a passing note. It is
+  checked before every reward (suspension, passing, seventh, a fixed voice's
+  suspension), counts as a dissonance for resolutions, and is excluded from
+  preparation. Spelling uses the slot's `keyAt`, so fixed and free voices are
+  spelled in the same key at each moment.
+- **Report: `chromaticClash` is checked before all other rules and is an
+  error.** `DISSONANCE_ERRORS = ['chromaticClash', 'unexplainedDissonance']`;
+  the summary adds `dissonanceErrors` and `dissonanceErrorsPerBar`. The paper's
+  violation rate should use those, not `unexplainedDissonance` alone. With
+  `classify: false` a clash or an augmented/diminished interval is a plain
+  `strongDissonance`, so the old counts grow slightly.
+- **The report gets the key from `keys` (spans of `{start, key}`)**, which
+  `FugueResult.keys` provides from the generator's own key plan (each entry's
+  key while the subject or answer sounds, then the next entry's key, the tonic
+  for the cadence). The CLI's `generate` passes it automatically; `report`
+  accepts `keys` or a single `key`. **Without keys the report detects one key
+  from all the notes** (`detectKey`). That is approximate for modulating
+  music: fugue-research should pass a key per piece (or per section) for Bach,
+  otherwise passages in other keys are spelled in the home key.
+- **Parallels stay semitone-based**, so the parallel-fifths guard measures
+  exactly what it did; spelling only changes what counts as dissonant.
+- **Effect** (4 examples × 20 seeds, per bar, report with `keys`): chromatic
+  clashes 0 at any tick in 2, 3 and 4 voices (a new test checks every tick for
+  3 and 4 voices, seeds 1–4); unexplained 0 / 0 / 0; parallels 2 in 240
+  fugues, at most 1 per fugue. The rewards were not retuned, and the
+  2026-11-18 rates drifted: 3 voices suspension 0.541, ornamented 0.130,
+  passing 0.229, retardation 0.032; 4 voices suspension 0.592, ornamented
+  0.117, passing 0.172, retardation 0.035. Retune if the drift matters.

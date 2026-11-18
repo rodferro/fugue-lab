@@ -54,6 +54,15 @@ function reportOptions(o: Obj): ReportOptions {
   if (o.ticksPerBeat !== undefined) out.ticksPerBeat = int(o.ticksPerBeat, 'ticksPerBeat', 1);
   if (o.strongEvery !== undefined) out.strongEvery = int(o.strongEvery, 'strongEvery', 1);
   if (o.classify !== undefined) out.classify = o.classify !== false;
+  if (o.keys !== undefined) {
+    if (!Array.isArray(o.keys) || o.keys.length === 0) throw new RequestError('keys must be a non-empty array of {start, key}');
+    out.keys = o.keys.map((k, i) => {
+      const span = obj(k, `keys[${i}]`);
+      const sk = key(span.key);
+      if (!sk) throw new RequestError(`keys[${i}].key is required`);
+      return { start: int(span.start, `keys[${i}].start`, 0), key: sk };
+    });
+  } else if (o.key !== undefined) out.keys = [{ start: 0, key: key(o.key)! }];
   if (o.suspensions !== undefined) out.suspensions = o.suspensions === true;
   return out;
 }
@@ -67,7 +76,7 @@ export function generateCommand(req: unknown): CommandResult {
   if (settings.voices !== undefined && !(settings.voices in VOICE_SETS)) throw new RequestError('settings.voices must be 2, 3 or 4');
   if (settings.key !== undefined) settings.key = key(settings.key) ?? null;
   const f = generateFugue(subject, settings);
-  const opts = { ...reportOptions(r.report === undefined ? {} : obj(r.report, 'report')), beatsPerBar: f.beatsPerBar };
+  const opts = { ...reportOptions(r.report === undefined ? {} : obj(r.report, 'report')), beatsPerBar: f.beatsPerBar, keys: f.keys };
   const issues = voiceLeadingReport(f.notes, opts);
   const files: OutputFile[] = [];
   if (typeof r.midi === 'string' && r.midi) {
@@ -86,7 +95,7 @@ export function generateCommand(req: unknown): CommandResult {
   };
 }
 
-/** {voices: Note[][], ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?} → issues and per-bar summary. */
+/** {voices: Note[][], ticksPerBeat?, beatsPerBar?, strongEvery?, classify?, suspensions?, key? | keys?} → issues and per-bar summary. */
 export function reportCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
   if (!Array.isArray(r.voices) || r.voices.length < 2) throw new RequestError('voices must be an array of at least two note arrays');

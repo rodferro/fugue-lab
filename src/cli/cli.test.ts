@@ -53,3 +53,15 @@ test('bad requests are rejected with a message', () => {
   assert.throws(() => reportCommand({ voices: [[{ pitch: 60, start: 0.5, dur: 4 }], []] }), /integer/);
   assert.throws(() => answerCommand({ subject, key: { tonic: 14, mode: 'minor' } }), /pitch class/);
 });
+
+test('report spells with key or keys, and generate passes its key plan', () => {
+  const voices = [[{ pitch: 64, start: 0, dur: 4 }, { pitch: 61, start: 4, dur: 4 }, { pitch: 69, start: 8, dur: 4 }], [{ pitch: 53, start: 0, dur: 12 }]];
+  const dm = json(reportCommand({ voices, key: { tonic: 2, mode: 'minor' } }).json);
+  assert.equal(dm.summary.counts.unexplainedDissonance, 1);
+  const fM = json(reportCommand({ voices, keys: [{ start: 0, key: { tonic: 5, mode: 'major' } }] }).json);
+  assert.equal(fM.issues.length, 0);
+  assert.throws(() => reportCommand({ voices, keys: [{ start: 0 }] }), /key/);
+  const g = json(generateCommand({ subject, settings: { voices: 3 } }).json);
+  assert.ok(g.keys.length >= 2);
+  assert.equal(g.report.counts.chromaticClash, 0);
+});

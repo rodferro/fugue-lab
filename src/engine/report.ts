@@ -7,10 +7,15 @@
 // passing, neighbour, appoggiatura, chordal seventh, unexplained), so that
 // only the unexplained ones need to count as errors.
 import { Note, TPB, noteEnd, sortNotes } from './model';
+import { Key, KeySpan, chromaticClash, keyAtTick, spelledDissonant } from './theory';
+import { detectKey } from './analyze';
 
 /**
- * Strong-beat dissonances, classified. In order of precedence (the first
- * rule that explains the dissonance wins, trying either voice of the pair):
+ * Strong-beat dissonances, classified. Intervals are spelled in the key
+ * (`keys`), so augmented and diminished intervals are dissonant whatever
+ * their semitone size. First 'chromaticClash': two forms of one scale degree
+ * (C against C♯ in D minor), always an error. Then, in order of precedence (the
+ * first rule that explains the dissonance wins, trying either voice of the pair):
  * prepared notes (suspension, ornamented suspension, retardation), then the
  * shape of a note struck on the beat (passing, neighbour, appoggiatura,
  * escape tone, anticipation), then the texture (pedal point, chordal
@@ -18,6 +23,7 @@ import { Note, TPB, noteEnd, sortNotes } from './model';
  * they are all 'strongDissonance' (or 'suspension' with `suspensions: true`).
  */
 export type DissonanceKind =
+  | 'chromaticClash'
   | 'suspension'
   | 'ornamentedSuspension'
   | 'retardation'
@@ -33,10 +39,13 @@ export type DissonanceKind =
 export type IssueKind = 'parallel5' | 'parallel8' | 'strongDissonance' | DissonanceKind | 'crossing';
 
 export const DISSONANCE_KINDS: DissonanceKind[] = [
-  'suspension', 'ornamentedSuspension', 'retardation',
+  'chromaticClash', 'suspension', 'ornamentedSuspension', 'retardation',
   'passingTone', 'neighbourTone', 'appoggiatura', 'escapeTone', 'anticipation',
   'pedalPoint', 'chordalSeventh', 'unexplainedDissonance',
 ];
+
+/** The strong-beat dissonances that count as errors; the other kinds are style rates. */
+export const DISSONANCE_ERRORS: DissonanceKind[] = ['chromaticClash', 'unexplainedDissonance'];
 
 export const ISSUE_KINDS: IssueKind[] = ['parallel5', 'parallel8', 'strongDissonance', ...DISSONANCE_KINDS, 'crossing'];
 
@@ -64,10 +73,15 @@ export interface ReportOptions {
    * down by step as 'suspension' instead of 'strongDissonance'.
    */
   suspensions?: boolean;
+  /**
+   * The key plan, used to spell vertical intervals (see KeySpan; a generated
+   * fugue gives it as FugueResult.keys). Omitted: one key detected from all
+   * the notes (detectKey).
+   */
+  keys?: KeySpan[];
 }
 
-const DISS = new Set([1, 2, 6, 10, 11]);
-const dissonant = (a: number, b: number): boolean => DISS.has(Math.abs(a - b) % 12);
+type KeyAt = (t: number) => Key;
 
 interface LineGrid {
   notes: Note[];
@@ -95,13 +109,13 @@ const pitchAt = (g: LineGrid, t: number): number => (t >= 0 && g.at[t] >= 0 ? g.
  * (held over or re-struck) and was consonant with `y` there, so the
  * dissonance comes from `y` moving. Otherwise -1.
  */
-function preparedNote(x: LineGrid, y: LineGrid, t: number): number {
+function preparedNote(x: LineGrid, y: LineGrid, t: number, keyAt: KeyAt): number {
   const k = x.at[t];
   if (k < 0 || t < 1) return -1;
   const n = x.notes[k];
   if (pitchAt(x, t - 1) !== n.pitch) return -1;
   const yBefore = pitchAt(y, t - 1);
-  return yBefore < 0 || dissonant(n.pitch, yBefore) ? -1 : k;
+  return yBefore < 0 || spelledDissonant(n.pitch, yBefore, keyAt(t - 1)) ? -1 : k;
 }
 
 /**
@@ -112,9 +126,9 @@ function preparedNote(x: LineGrid, y: LineGrid, t: number): number {
  * Retardation: the next note follows directly a step higher, within `window`.
  */
 function preparedKind(
-  x: LineGrid, y: LineGrid, t: number, window: number, ornWindow: number,
+  x: LineGrid, y: LineGrid, t: number, window: number, ornWindow: number, keyAt: KeyAt,
 ): 'suspension' | 'ornamentedSuspension' | 'retardation' | null {
-  const k = preparedNote(x, y, t);
+  const k = preparedNote(x, y, t, keyAt);
   if (k < 0) return null;
   const n = x.notes[k];
   const r = x.notes[k + 1];
@@ -133,8 +147,8 @@ function preparedKind(
 }
 
 /** The old rule, kept for `classify: false` with `suspensions: true`. */
-function isSuspension(x: LineGrid, y: LineGrid, t: number, window: number): boolean {
-  return preparedKind(x, y, t, window, 0) === 'suspension';
+function isSuspension(x: LineGrid, y: LineGrid, t: number, window: number, keyAt: KeyAt): boolean {
+  return preparedKind(x, y, t, window, 0, keyAt) === 'suspension';
 }
 
 const isStep = (d: number): boolean => d !== 0 && Math.abs(d) <= 2;
@@ -229,8 +243,9 @@ interface Windows {
   bar: number;
 }
 
-function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: number, w: Windows): DissonanceKind {
-  const prepared = [preparedKind(a, b, t, w.window, w.ornWindow), preparedKind(b, a, t, w.window, w.ornWindow)];
+function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: number, w: Windows, keyAt: KeyAt): DissonanceKind {
+  if (chromaticClash(pitchAt(a, t), pitchAt(b, t), keyAt(t))) return 'chromaticClash';
+  const prepared = [preparedKind(a, b, t, w.window, w.ornWindow, keyAt), preparedKind(b, a, t, w.window, w.ornWindow, keyAt)];
   for (const kind of ['suspension', 'ornamentedSuspension', 'retardation'] as const) if (prepared.includes(kind)) return kind;
   const shapes = [accentedShape(a, t, w.window, w.maxRest), accentedShape(b, t, w.window, w.maxRest)];
   for (const kind of SHAPES) if (shapes.includes(kind)) return kind;
@@ -247,6 +262,8 @@ export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): 
   const w: Windows = { window, ornWindow: 3 * beat, maxRest: Math.floor(tpb / 2), bar: tpb * (opts.beatsPerBar ?? 4) };
   const end = Math.max(0, ...voices.flat().map(noteEnd));
   const grid = voices.map((v) => lineGrid(v, end));
+  const spans: KeySpan[] = opts.keys?.length ? [...opts.keys].sort((x, y) => x.start - y.start) : [{ start: 0, key: detectKey(voices.flat())[0].key }];
+  const keyAt: KeyAt = (t) => keyAtTick(spans, t);
   const issues: Issue[] = [];
   for (let i = 0; i < voices.length; i++) {
     for (let j = i + 1; j < voices.length; j++) {
@@ -263,10 +280,10 @@ export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): 
           if (now === 7 && before === 7) issues.push({ kind: 'parallel5', tick: t, voices: [i, j] });
           if (now === 0 && before === 0) issues.push({ kind: 'parallel8', tick: t, voices: [i, j] });
         }
-        if (t % strong === 0 && dissonant(pa, pb)) {
+        if (t % strong === 0 && spelledDissonant(pa, pb, keyAt(t))) {
           let kind: IssueKind;
-          if (opts.classify ?? true) kind = classifyDissonance(grid, a, b, t, w);
-          else kind = opts.suspensions && (isSuspension(a, b, t, window) || isSuspension(b, a, t, window)) ? 'suspension' : 'strongDissonance';
+          if (opts.classify ?? true) kind = classifyDissonance(grid, a, b, t, w, keyAt);
+          else kind = opts.suspensions && (isSuspension(a, b, t, window, keyAt) || isSuspension(b, a, t, window, keyAt)) ? 'suspension' : 'strongDissonance';
           issues.push({ kind, tick: t, voices: [i, j] });
         }
         if (pa < pb) issues.push({ kind: 'crossing', tick: t, voices: [i, j] });
@@ -284,6 +301,9 @@ export interface ReportSummary {
   counts: Record<IssueKind, number>;
   /** Counts divided by bars, rounded to 3 decimals; the comparable number across pieces. */
   perBar: Record<IssueKind, number>;
+  /** Strong-beat dissonances that are errors (DISSONANCE_ERRORS), in total and per bar. */
+  dissonanceErrors: number;
+  dissonanceErrorsPerBar: number;
 }
 
 export function summarizeReport(issues: Issue[], length: number, ticksPerBar: number): ReportSummary {
@@ -293,5 +313,9 @@ export function summarizeReport(issues: Issue[], length: number, ticksPerBar: nu
   const perBar = Object.fromEntries(
     ISSUE_KINDS.map((k) => [k, bars > 0 ? Math.round((counts[k] / bars) * 1000) / 1000 : 0]),
   ) as Record<IssueKind, number>;
-  return { length, bars: Math.round(bars * 1000) / 1000, counts, perBar };
+  const dissonanceErrors = DISSONANCE_ERRORS.reduce((a, k) => a + counts[k], 0);
+  return {
+    length, bars: Math.round(bars * 1000) / 1000, counts, perBar,
+    dissonanceErrors, dissonanceErrorsPerBar: bars > 0 ? Math.round((dissonanceErrors / bars) * 1000) / 1000 : 0,
+  };
 }

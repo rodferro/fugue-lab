@@ -75,6 +75,53 @@ export function fromScalePitch(sp: ScalePitch, k: Key): number {
   return 12 * (sp.oct + extraOct) + k.tonic + scale[d] + sp.acc;
 }
 
+/** Diatonic steps (0-6, octaves removed) and semitones (0-11) from the lower to the higher pitch, spelled in `k`. */
+export function spelledInterval(a: number, b: number, k: Key): { steps: number; semis: number } {
+  const lo = toScalePitch(Math.min(a, b), k);
+  const hi = toScalePitch(Math.max(a, b), k);
+  const steps = hi.deg + 7 * hi.oct - (lo.deg + 7 * lo.oct);
+  return { steps: ((steps % 7) + 7) % 7, semis: mod12(Math.max(a, b) - Math.min(a, b)) };
+}
+
+/**
+ * Two forms of the same scale degree sounding together (C against C♯ in D
+ * minor), in any octave: a chromatic clash, never a usable dissonance.
+ */
+export function chromaticClash(a: number, b: number, k: Key): boolean {
+  if (mod12(a - b) === 0) return false;
+  return toScalePitch(a, k).deg === toScalePitch(b, k).deg;
+}
+
+/**
+ * Is the vertical interval dissonant once spelled in `k`? Consonant only as
+ * unison/octave, 3rd (3 or 4 semitones), perfect 4th, perfect 5th or 6th (8 or 9),
+ * so augmented and diminished intervals (C♯–F, B♭–C♯) are dissonant even
+ * when their semitone count matches a consonance. The perfect 4th counts as
+ * consonant here; callers that treat a 4th over the bass as dissonant check
+ * that themselves.
+ */
+export function spelledDissonant(a: number, b: number, k: Key): boolean {
+  const { steps, semis } = spelledInterval(a, b, k);
+  const ok = CONSONANT_SPELLED[steps];
+  return !ok.includes(semis);
+}
+
+/** Allowed semitone sizes per diatonic interval number (0 = unison/octave … 6 = seventh). */
+const CONSONANT_SPELLED: number[][] = [[0], [], [3, 4], [5], [7], [8, 9], []];
+
+/** A key from a tick on, until the next span. */
+export interface KeySpan {
+  start: number;
+  key: Key;
+}
+
+/** The key in force at tick `t` (the last span starting at or before it; the first span before that). */
+export function keyAtTick(spans: KeySpan[], t: number): Key {
+  let k = spans[0].key;
+  for (const s of spans) if (s.start <= t) k = s.key; else break;
+  return k;
+}
+
 /** Move a pitch by a number of scale steps within a key (accidental kept). */
 export function diatonicShift(midi: number, steps: number, k: Key): number {
   const sp = toScalePitch(midi, k);
