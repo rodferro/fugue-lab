@@ -28,9 +28,10 @@ test('unclassified: unprepared, upward-resolving or interrupted dissonances stay
   assert.deepEqual(kinds([up, lower76], { ...OLD, suspensions: true }), ['strongDissonance@4']);
   const rest = line([[72, 0, 8], [71, 10, 6]]); // rest before the resolution
   assert.deepEqual(kinds([rest, lower76], { ...OLD, suspensions: true }), ['strongDissonance@4']);
-  // Classified, the leapt-to C is an appoggiatura; the other two explain nothing.
+  // Classified, the leapt-to C is an appoggiatura, the upward resolution a
+  // retardation; the interrupted one explains nothing.
   assert.deepEqual(kinds([leapt, lower76]), ['appoggiatura@4']);
-  assert.deepEqual(kinds([up, lower76]), ['unexplainedDissonance@4']);
+  assert.deepEqual(kinds([up, lower76]), ['retardation@4']);
   assert.deepEqual(kinds([rest, lower76]), ['unexplainedDissonance@4']);
 });
 
@@ -92,8 +93,8 @@ test('melodic shapes need the note struck on the beat and joined to its neighbou
   const upper = line([[72, 0, 2], [74, 2, 4], [76, 6, 2]]);
   const lower = line([[64, 0, 4], [60, 4, 8]]);
   assert.deepEqual(kinds([upper, lower]), ['unexplainedDissonance@4']);
-  // A rest before the passing note breaks it.
-  assert.deepEqual(kinds([line([[72, 0, 3], [74, 4, 4], [76, 8, 4]]), heldC]), ['unexplainedDissonance@4']);
+  // A rest longer than an eighth before the passing note breaks it.
+  assert.deepEqual(kinds([line([[72, 0, 1], [74, 4, 4], [76, 8, 4]]), heldC]), ['unexplainedDissonance@4']);
 });
 
 test('chordal seventh: the sounding notes fit one seventh chord', () => {
@@ -123,4 +124,66 @@ test('summary counts every dissonance kind', () => {
   for (const k of DISSONANCE_KINDS) assert.equal(s.counts[k], k === 'passingTone' ? 1 : 0, k);
   assert.equal(s.counts.strongDissonance, 0);
   assert.equal(s.perBar.passingTone, 1);
+});
+
+test('ornamented suspension: one decorating note, then the step down, within three beats', () => {
+  // 7–6 over the D, with a lower (A) or upper (D) decoration before the B.
+  assert.deepEqual(kinds([line([[72, 0, 8], [69, 8, 2], [71, 10, 6]]), lower76]), ['ornamentedSuspension@4']);
+  // C–D–B: the step up decorates, so this is not a retardation.
+  assert.deepEqual(kinds([line([[72, 0, 8], [74, 8, 2], [71, 10, 6]]), lower76]), ['ornamentedSuspension@4']);
+  // Resolution later than three beats after the dissonance.
+  assert.deepEqual(kinds([line([[72, 0, 8], [69, 8, 10], [71, 18, 2]]), lower76]), ['unexplainedDissonance@4']);
+  // Two decorating notes.
+  assert.deepEqual(kinds([line([[72, 0, 8], [69, 8, 2], [67, 10, 2], [71, 12, 4]]), lower76]), ['unexplainedDissonance@4']);
+  // Unclassified with suspensions: still not a (plain) suspension.
+  assert.deepEqual(kinds([line([[72, 0, 8], [69, 8, 2], [71, 10, 6]]), lower76], { ...OLD, suspensions: true }), ['strongDissonance@4']);
+});
+
+test('retardation: prepared, resolves up by step', () => {
+  // C held over the bass moving E to D (a 7th), then up to D (an octave).
+  assert.deepEqual(kinds([line([[72, 0, 8], [74, 8, 8]]), lower76]), ['retardation@4']);
+  // Rising but not prepared (struck on the beat after a rest): not a retardation.
+  assert.deepEqual(kinds([line([[67, 0, 2], [72, 4, 4], [74, 8, 8]]), lower76]), ['unexplainedDissonance@4']);
+});
+
+test('escape tone: step in, leap out the other way', () => {
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 4], [69, 8, 4]]), heldC]), ['escapeTone@4']);
+  // Leaping on in the same direction is not an escape tone.
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 4], [79, 8, 4]]), heldC]), ['unexplainedDissonance@4']);
+});
+
+test('anticipation: left by repeating the same pitch', () => {
+  // D over C, repeated over the B that arrives under it (a 3rd).
+  const lower = line([[60, 0, 8], [59, 8, 4]]);
+  assert.deepEqual(kinds([line([[71, 0, 4], [74, 4, 4], [74, 8, 4]]), lower]), ['anticipation@4']);
+  // A rest before the repetition breaks it.
+  assert.deepEqual(kinds([line([[71, 0, 4], [74, 4, 3], [74, 8, 4]]), lower]), ['unexplainedDissonance@4']);
+});
+
+test('pedal point: the other voice holds its note for at least a bar', () => {
+  const fSharp = line([[72, 0, 4], [78, 4, 4], [72, 8, 4]]); // leapt to and from: no melodic explanation
+  assert.deepEqual(kinds([fSharp, line([[48, 0, 32]])]), ['pedalPoint@4']);
+  // Re-struck at the same pitch, joined: still one held pedal of a bar.
+  assert.deepEqual(kinds([fSharp, line([[48, 0, 8], [48, 8, 8]])]), ['pedalPoint@4']);
+  // Shorter than a bar.
+  assert.deepEqual(kinds([fSharp, line([[48, 0, 12]])]), ['unexplainedDissonance@4']);
+  // The bar length comes from beatsPerBar.
+  assert.deepEqual(kinds([fSharp, line([[48, 0, 16]])], { beatsPerBar: 8 }), ['unexplainedDissonance@4']);
+  // A melodic explanation wins over the pedal.
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 4], [76, 8, 4]]), line([[48, 0, 32]])]), ['passingTone@4']);
+});
+
+test('passing and neighbour tones allow a rest of up to an eighth next to them', () => {
+  // 16th and eighth rests before, an eighth rest after.
+  assert.deepEqual(kinds([line([[72, 0, 3], [74, 4, 4], [76, 8, 4]]), heldC]), ['passingTone@4']);
+  assert.deepEqual(kinds([line([[72, 0, 2], [74, 4, 4], [76, 8, 4]]), heldC]), ['passingTone@4']);
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 2], [76, 8, 4]]), heldC]), ['passingTone@4']);
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 3], [72, 8, 4]]), heldC]), ['neighbourTone@4']);
+  // More than an eighth after.
+  assert.deepEqual(kinds([line([[72, 0, 4], [74, 4, 1], [76, 8, 4]]), heldC]), ['unexplainedDissonance@4']);
+  // Appoggiaturas get no such allowance.
+  assert.deepEqual(kinds([line([[67, 0, 2], [74, 4, 4], [72, 8, 4]]), heldC]), ['unexplainedDissonance@4']);
+  // The eighth scales with the grid (8 ticks per beat: up to 4 ticks).
+  const x2 = (ns: Note[]) => ns.map((n) => ({ pitch: n.pitch, start: n.start * 2, dur: n.dur * 2 }));
+  assert.deepEqual(kinds([x2(line([[72, 0, 2], [74, 4, 4], [76, 8, 4]])), x2(heldC)], { ticksPerBeat: 8 }), ['passingTone@8']);
 });

@@ -100,3 +100,33 @@ that supersedes it, not by editing the old one.
 - **fugue-research picks the new kinds up as-is** (it iterates over the
   summary's counts), but its `strongDissonance` column is now always 0. Pass
   `classify: false` there to reproduce the 2026-11-17 reference rates.
+- **Five more dissonance kinds, and rests next to passing/neighbour tones**
+  (extends the classification entry above). New kinds: `ornamentedSuspension`
+  (prepared; one decorating note of any pitch, then the step down, within three
+  beats), `retardation` (prepared; resolves directly up by step within two
+  beats), `escapeTone` (struck on the beat; step in, leap of 3+ semitones out
+  the other way), `anticipation` (struck on the beat; left by repeating the
+  pitch, approached any way), `pedalPoint` (either voice holds its pitch for at
+  least a bar). Passing and neighbour tones now allow a rest of up to an eighth
+  on either side, kept under their existing kinds rather than new ones, since
+  the shape is the same. Appoggiaturas, escape tones and anticipations still
+  need their notes joined directly.
+- **Precedence: prepared, then shape, then texture.** Suspension, ornamented
+  suspension, retardation; passing, neighbour, appoggiatura, escape tone,
+  anticipation; pedal point, chordal seventh. Ornamented suspension is checked
+  before retardation, so in C–D–B the D is a decoration of a 7–6, not an
+  upward resolution. A pedal explains less than the line does, so melodic
+  kinds win over it; it wins over chordal seventh because the dissonance is
+  against the held note itself.
+- **Pedal length needs the bar, so the report takes `beatsPerBar`** (default 4;
+  the CLI passes it from the request or the generated fugue). Directly joined
+  re-strikes of the same pitch count as one held note, because ties often
+  arrive split from MusicXML.
+- **The eighth is `ticksPerBeat / 2`.** The report documents `ticksPerBeat` as
+  ticks per quarter. fugue-research passes the meter's beat there instead (a
+  half note in 2/2), so in 2/2 its rest allowance is a quarter, and the two-
+  and three-beat windows are in half notes. Fine for 4/4 and 3/4; revisit
+  if the 2/2 and 12/8 rates look off.
+- **Generator, for reference** (4 examples × 20 seeds, per bar, 2/3/4 voices):
+  unexplained now 0 / 0 / 0.001 (was 0 / 0.002 / 0.013); the new kinds are
+  rare (each ≤ 0.011). Totals still equal the old `strongDissonance` counts.

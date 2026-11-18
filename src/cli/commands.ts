@@ -67,7 +67,7 @@ export function generateCommand(req: unknown): CommandResult {
   if (settings.voices !== undefined && !(settings.voices in VOICE_SETS)) throw new RequestError('settings.voices must be 2, 3 or 4');
   if (settings.key !== undefined) settings.key = key(settings.key) ?? null;
   const f = generateFugue(subject, settings);
-  const opts = reportOptions(r.report === undefined ? {} : obj(r.report, 'report'));
+  const opts = { ...reportOptions(r.report === undefined ? {} : obj(r.report, 'report')), beatsPerBar: f.beatsPerBar };
   const issues = voiceLeadingReport(f.notes, opts);
   const files: OutputFile[] = [];
   if (typeof r.midi === 'string' && r.midi) {
@@ -101,7 +101,7 @@ export function reportCommand(req: unknown): CommandResult {
     return makeMonophonic(line);
   });
   const length = Math.max(0, ...voices.flat().map(noteEnd));
-  const issues = voiceLeadingReport(voices, opts);
+  const issues = voiceLeadingReport(voices, { ...opts, beatsPerBar });
   return {
     json: { summary: summarizeReport(issues, length, tpb * beatsPerBar), issues, overlapsTrimmed: trimmed },
     files: [],

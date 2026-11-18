@@ -11,22 +11,31 @@ import { Note, TPB, noteEnd, sortNotes } from './model';
 /**
  * Strong-beat dissonances, classified. In order of precedence (the first
  * rule that explains the dissonance wins, trying either voice of the pair):
- * suspension, passing tone, neighbour tone, appoggiatura, chordal seventh;
- * anything else is 'unexplainedDissonance'. With `classify: false` they are
- * all 'strongDissonance' (or 'suspension' with `suspensions: true`) instead.
+ * prepared notes (suspension, ornamented suspension, retardation), then the
+ * shape of a note struck on the beat (passing, neighbour, appoggiatura,
+ * escape tone, anticipation), then the texture (pedal point, chordal
+ * seventh); anything else is 'unexplainedDissonance'. With `classify: false`
+ * they are all 'strongDissonance' (or 'suspension' with `suspensions: true`).
  */
 export type DissonanceKind =
   | 'suspension'
+  | 'ornamentedSuspension'
+  | 'retardation'
   | 'passingTone'
   | 'neighbourTone'
   | 'appoggiatura'
+  | 'escapeTone'
+  | 'anticipation'
+  | 'pedalPoint'
   | 'chordalSeventh'
   | 'unexplainedDissonance';
 
 export type IssueKind = 'parallel5' | 'parallel8' | 'strongDissonance' | DissonanceKind | 'crossing';
 
 export const DISSONANCE_KINDS: DissonanceKind[] = [
-  'suspension', 'passingTone', 'neighbourTone', 'appoggiatura', 'chordalSeventh', 'unexplainedDissonance',
+  'suspension', 'ornamentedSuspension', 'retardation',
+  'passingTone', 'neighbourTone', 'appoggiatura', 'escapeTone', 'anticipation',
+  'pedalPoint', 'chordalSeventh', 'unexplainedDissonance',
 ];
 
 export const ISSUE_KINDS: IssueKind[] = ['parallel5', 'parallel8', 'strongDissonance', ...DISSONANCE_KINDS, 'crossing'];
@@ -42,6 +51,8 @@ export interface ReportOptions {
   ticksPerBeat?: number;
   /** Ticks between the metrically strong points checked for dissonance. Default: every beat. */
   strongEvery?: number;
+  /** Beats (of `ticksPerBeat`) per bar; sets how long a pedal point must last. Default 4. */
+  beatsPerBar?: number;
   /**
    * Classify every strong-beat dissonance (see DissonanceKind). Default true.
    * false gives the old report: every strong-beat dissonance is
@@ -79,53 +90,107 @@ function lineGrid(line: Note[], end: number): LineGrid {
 const pitchAt = (g: LineGrid, t: number): number => (t >= 0 && g.at[t] >= 0 ? g.notes[g.at[t]].pitch : -1);
 
 /**
- * Is the note voice `x` sounds at strong tick `t` a suspension against voice `y`?
- * Prepared: the same pitch already sounded in `x` just before `t` (held over or
- * re-struck) and was consonant with `y` there, so the dissonance comes from `y`
- * moving. Resolved: the next note of `x` follows directly, a step (1-2
- * semitones) lower, within `window` ticks of `t`. Upward resolutions
- * (retardations) and ornamented resolutions are not recognized.
+ * Index of the note voice `x` sounds at strong tick `t` if it is prepared
+ * against voice `y`: the same pitch already sounded in `x` just before `t`
+ * (held over or re-struck) and was consonant with `y` there, so the
+ * dissonance comes from `y` moving. Otherwise -1.
  */
-function isSuspension(x: LineGrid, y: LineGrid, t: number, window: number): boolean {
+function preparedNote(x: LineGrid, y: LineGrid, t: number): number {
   const k = x.at[t];
-  if (k < 0 || t < 1) return false;
+  if (k < 0 || t < 1) return -1;
   const n = x.notes[k];
-  if (pitchAt(x, t - 1) !== n.pitch) return false;
+  if (pitchAt(x, t - 1) !== n.pitch) return -1;
   const yBefore = pitchAt(y, t - 1);
-  if (yBefore < 0 || dissonant(n.pitch, yBefore)) return false;
+  return yBefore < 0 || dissonant(n.pitch, yBefore) ? -1 : k;
+}
+
+/**
+ * A prepared note's resolution, checked in this order. Suspension: the next
+ * note follows directly, a step (1-2 semitones) lower, within `window` ticks
+ * of `t`. Ornamented suspension: one decorating note (any pitch) comes first,
+ * and the step-down resolution follows it directly within `ornWindow` ticks.
+ * Retardation: the next note follows directly a step higher, within `window`.
+ */
+function preparedKind(
+  x: LineGrid, y: LineGrid, t: number, window: number, ornWindow: number,
+): 'suspension' | 'ornamentedSuspension' | 'retardation' | null {
+  const k = preparedNote(x, y, t);
+  if (k < 0) return null;
+  const n = x.notes[k];
   const r = x.notes[k + 1];
-  if (!r || r.start !== noteEnd(n) || r.start > t + window) return false;
-  const step = n.pitch - r.pitch;
-  return step === 1 || step === 2;
+  if (!r || r.start !== noteEnd(n)) return null;
+  const fall = n.pitch - r.pitch;
+  if (r.start <= t + window && (fall === 1 || fall === 2)) return 'suspension';
+  // Checked before retardation: in C–D–B the D decorates a 7–6, it is not
+  // an upward resolution.
+  const r2 = x.notes[k + 2];
+  if (r2 && r2.start === noteEnd(r) && r2.start <= t + ornWindow) {
+    const fall2 = n.pitch - r2.pitch;
+    if (fall2 === 1 || fall2 === 2) return 'ornamentedSuspension';
+  }
+  if (r.start <= t + window && (fall === -1 || fall === -2)) return 'retardation';
+  return null;
+}
+
+/** The old rule, kept for `classify: false` with `suspensions: true`. */
+function isSuspension(x: LineGrid, y: LineGrid, t: number, window: number): boolean {
+  return preparedKind(x, y, t, window, 0) === 'suspension';
 }
 
 const isStep = (d: number): boolean => d !== 0 && Math.abs(d) <= 2;
 
+type Shape = 'passingTone' | 'neighbourTone' | 'appoggiatura' | 'escapeTone' | 'anticipation';
+const SHAPES: Shape[] = ['passingTone', 'neighbourTone', 'appoggiatura', 'escapeTone', 'anticipation'];
+
 /**
  * The melodic shape around the note voice `x` strikes at strong tick `t`, if
- * it is an accented non-chord tone: the note starts at `t`, the previous note
- * leads directly into it, and the next note follows directly within `window`
- * ticks. Passing: step in, step on in the same direction. Neighbour: step in,
- * step back to the previous pitch. Appoggiatura: leap in (3+ semitones), step
- * out. Whether the note it moves to is consonant is not checked (as for
- * suspensions).
+ * it is an accented non-chord tone. The note starts at `t`, and the next
+ * note starts within `window` ticks of `t`.
+ * - Passing: step in, step on in the same direction.
+ * - Neighbour: step in, step back to the previous pitch.
+ *   Both allow a rest of up to `maxRest` ticks before and after the note.
+ * - Appoggiatura: leap in (3+ semitones), step out.
+ * - Escape tone: step in, leap out (3+) the other way.
+ * - Anticipation: left by repeating the same pitch; approached any way.
+ * The last three need the neighbouring notes joined directly. Whether the
+ * note it moves to is consonant is not checked (as for suspensions).
  */
-function accentedNonChordTone(x: LineGrid, t: number, window: number): 'passingTone' | 'neighbourTone' | 'appoggiatura' | null {
+function accentedShape(x: LineGrid, t: number, window: number, maxRest: number): Shape | null {
   const k = x.at[t];
   if (k < 1) return null;
   const n = x.notes[k];
   const prev = x.notes[k - 1];
   const next = x.notes[k + 1];
-  if (n.start !== t || noteEnd(prev) !== t || !next || next.start !== noteEnd(n) || next.start > t + window) return null;
+  if (n.start !== t || !next || next.start > t + window) return null;
+  const gapIn = t - noteEnd(prev);
+  const gapOut = next.start - noteEnd(n);
   const into = n.pitch - prev.pitch;
   const out = next.pitch - n.pitch;
-  if (!isStep(out)) return null;
-  if (isStep(into)) {
+  if (isStep(into) && isStep(out) && gapIn <= maxRest && gapOut <= maxRest) {
     if (Math.sign(into) === Math.sign(out)) return 'passingTone';
     if (next.pitch === prev.pitch) return 'neighbourTone';
-    return null;
   }
-  return Math.abs(into) >= 3 ? 'appoggiatura' : null;
+  if (gapIn !== 0 || gapOut !== 0) return null;
+  if (Math.abs(into) >= 3 && isStep(out)) return 'appoggiatura';
+  if (isStep(into) && Math.abs(out) >= 3 && Math.sign(out) === -Math.sign(into)) return 'escapeTone';
+  if (out === 0) return 'anticipation';
+  return null;
+}
+
+/**
+ * Does voice `y` hold the note it sounds at `t` for at least `bar` ticks?
+ * Re-strikes of the same pitch that join directly count as one held note
+ * (ties often arrive split from MusicXML).
+ */
+function holdsPedal(y: LineGrid, t: number, bar: number): boolean {
+  const k = y.at[t];
+  if (k < 0) return false;
+  const p = y.notes[k].pitch;
+  let first = k;
+  let last = k;
+  while (first > 0 && y.notes[first - 1].pitch === p && noteEnd(y.notes[first - 1]) === y.notes[first].start) first--;
+  while (last + 1 < y.notes.length && y.notes[last + 1].pitch === p && y.notes[last + 1].start === noteEnd(y.notes[last])) last++;
+  return noteEnd(y.notes[last]) - y.notes[first].start >= bar;
 }
 
 /** Root-position pitch-class shapes of the seventh chords: maj7, dom7, min7, half-diminished, diminished. */
@@ -153,10 +218,23 @@ function fitsSeventhChord(grid: LineGrid[], t: number): boolean {
   return false;
 }
 
-function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: number, window: number): DissonanceKind {
-  if (isSuspension(a, b, t, window) || isSuspension(b, a, t, window)) return 'suspension';
-  const shapes = [accentedNonChordTone(a, t, window), accentedNonChordTone(b, t, window)];
-  for (const kind of ['passingTone', 'neighbourTone', 'appoggiatura'] as const) if (shapes.includes(kind)) return kind;
+interface Windows {
+  /** Resolution of a suspension or retardation, and the next note after an accented shape. */
+  window: number;
+  /** Resolution of an ornamented suspension. */
+  ornWindow: number;
+  /** Longest rest allowed next to a passing or neighbour tone (an eighth). */
+  maxRest: number;
+  /** Shortest pedal point (a bar). */
+  bar: number;
+}
+
+function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: number, w: Windows): DissonanceKind {
+  const prepared = [preparedKind(a, b, t, w.window, w.ornWindow), preparedKind(b, a, t, w.window, w.ornWindow)];
+  for (const kind of ['suspension', 'ornamentedSuspension', 'retardation'] as const) if (prepared.includes(kind)) return kind;
+  const shapes = [accentedShape(a, t, w.window, w.maxRest), accentedShape(b, t, w.window, w.maxRest)];
+  for (const kind of SHAPES) if (shapes.includes(kind)) return kind;
+  if (holdsPedal(a, t, w.bar) || holdsPedal(b, t, w.bar)) return 'pedalPoint';
   if (fitsSeventhChord(grid, t)) return 'chordalSeventh';
   return 'unexplainedDissonance';
 }
@@ -164,7 +242,9 @@ function classifyDissonance(grid: LineGrid[], a: LineGrid, b: LineGrid, t: numbe
 export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): Issue[] {
   const tpb = opts.ticksPerBeat ?? TPB;
   const strong = opts.strongEvery ?? tpb;
-  const window = 2 * Math.max(strong, tpb);
+  const beat = Math.max(strong, tpb);
+  const window = 2 * beat;
+  const w: Windows = { window, ornWindow: 3 * beat, maxRest: Math.floor(tpb / 2), bar: tpb * (opts.beatsPerBar ?? 4) };
   const end = Math.max(0, ...voices.flat().map(noteEnd));
   const grid = voices.map((v) => lineGrid(v, end));
   const issues: Issue[] = [];
@@ -185,7 +265,7 @@ export function voiceLeadingReport(voices: Note[][], opts: ReportOptions = {}): 
         }
         if (t % strong === 0 && dissonant(pa, pb)) {
           let kind: IssueKind;
-          if (opts.classify ?? true) kind = classifyDissonance(grid, a, b, t, window);
+          if (opts.classify ?? true) kind = classifyDissonance(grid, a, b, t, w);
           else kind = opts.suspensions && (isSuspension(a, b, t, window) || isSuspension(b, a, t, window)) ? 'suspension' : 'strongDissonance';
           issues.push({ kind, tick: t, voices: [i, j] });
         }

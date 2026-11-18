@@ -116,18 +116,28 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
 measured at its own resolution.
 
 Strong-beat dissonances are classified by default, first rule wins, trying either
-voice of the pair: `suspension` (same pitch held or re-struck from a consonance,
-resolves directly a step down within two beats), `passingTone` (struck on the beat,
-step in and step on in the same direction), `neighbourTone` (step in, step back to the
-same pitch), `appoggiatura` (leap in, step out), `chordalSeventh` (3+ distinct pitch
-classes sounding, all in one maj7/dom7/min7/ø7/°7 chord), else `unexplainedDissonance`.
-The neighbouring notes must join directly (no rests), and the next one start within two
-beats. Resolution consonance is not checked. `unexplainedDissonance` is the
-error metric. `classify: false` gives the old report: everything is `strongDissonance`,
-or `suspension` too with `suspensions: true`; the 4-voice quality test and the UI chip
-use it so their bounds keep their meaning. Not recognized yet: retardations (upward
-resolution), escape tones and cambiatas, ornamented or delayed resolutions, pedal
-points, and 4ths against the bass (P4 is treated as consonant everywhere).
+voice of the pair. "Beat" below is `max(strongEvery, ticksPerBeat)`.
+
+- Prepared (same pitch held or re-struck from a consonance with the other voice):
+  `suspension` (next note directly a step down within two beats),
+  `ornamentedSuspension` (one decorating note of any pitch, then the step down, within
+  three beats; checked before retardation, so C–D–B is a decorated 7–6),
+  `retardation` (next note directly a step up within two beats).
+- Struck on the beat, next note within two beats: `passingTone` (step in, step on the
+  same way), `neighbourTone` (step in, step back to the same pitch), both allowing a rest
+  of up to an eighth (`ticksPerBeat / 2`) on either side; then, with notes joined
+  directly, `appoggiatura` (leap in, step out), `escapeTone` (step in, leap out the
+  other way), `anticipation` (left by repeating the pitch, approached any way).
+- Texture: `pedalPoint` (either voice holds its pitch for at least a bar of
+  `beatsPerBar`, default 4; joined re-strikes count as held), `chordalSeventh` (3+
+  distinct pitch classes sounding, all in one maj7/dom7/min7/ø7/°7 chord).
+- Else `unexplainedDissonance`, the error metric.
+
+Resolution consonance is not checked. `classify: false` gives the old report:
+everything is `strongDissonance`, or `suspension` too with `suspensions: true`; the
+4-voice quality test and the UI chip use it so their bounds keep their meaning. Not
+recognized yet: cambiatas, double neighbours, resolutions delayed by more than one
+note, and 4ths against the bass (P4 is treated as consonant everywhere).
 
 ## Checks before committing
 
