@@ -85,6 +85,7 @@ function reportOptions(o: Obj): ReportOptions {
 /**
  * {subject, settings?, midi?, bpm?, report?: ReportOptions} → the generated exposition plus its report summary.
  * settings.meter is "6/8" or {num, den}; settings.ticksPerQuarter (default 4) is the grid of the subject and the result.
+ * settings.constraints "hard" gives the hard-constraint baseline; the output's hardRelaxations counts its dead ends.
  */
 export function generateCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
@@ -97,6 +98,9 @@ export function generateCommand(req: unknown): CommandResult {
   if (settings.beatsPerBar !== undefined) int(settings.beatsPerBar, 'settings.beatsPerBar', 1);
   if (settings.clashPenalty !== undefined && !(typeof settings.clashPenalty === 'number' && Number.isFinite(settings.clashPenalty) && settings.clashPenalty >= 0)) {
     throw new RequestError('settings.clashPenalty must be a number >= 0');
+  }
+  if (settings.constraints !== undefined && settings.constraints !== 'soft' && settings.constraints !== 'hard') {
+    throw new RequestError('settings.constraints must be "soft" or "hard"');
   }
   if (settings.ticksPerQuarter !== undefined) {
     const q = int(settings.ticksPerQuarter, 'settings.ticksPerQuarter', 4);
@@ -122,6 +126,8 @@ export function generateCommand(req: unknown): CommandResult {
       ...f,
       report: summarizeReport(issues, f.length, f.grid.bar),
       issues,
+      /** Hard mode: how many steps had to relax a hard rule (0 in soft mode); each is in `relaxations` with its bar and beat. */
+      hardRelaxations: f.relaxations.length,
     },
     files,
   };

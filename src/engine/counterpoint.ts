@@ -45,9 +45,69 @@ export interface LineSpec {
   rewards?: Partial<DissonanceRewards>;
   /** Overrides CHROMATIC_CLASH, the cost of a chromatic clash at any tick; for experiments. */
   clashPenalty?: number;
+  /**
+   * 'soft' (default): every rule is a cost. 'hard': the rules marked hard in
+   * LINE_RULES prune the beam instead, and the dissonance rewards are 0.
+   */
+  constraints?: Constraints;
+  /** Hard mode: steps where no candidate kept every hard rule, so the least-bad ones were allowed. Appended to. */
+  relaxations?: Relaxation[];
   beam?: number;
   noise?: number;
 }
+
+export type Constraints = 'soft' | 'hard';
+
+/**
+ * Every cost generateLine charges, and how hard mode treats it. hard = a
+ * textbook prohibition: a candidate breaking it is dropped from the beam (in
+ * soft mode it is a cost, as listed). soft = a preference: a cost in both
+ * modes. Bonuses (negative costs) are preferences and stay soft. The
+ * dissonance rewards (DissonanceRewards) are not here: hard mode sets them to 0.
+ * This is the only place the classification lives; flip a flag to move a rule.
+ */
+export const LINE_RULES = {
+  // Hard: textbook prohibitions.
+  range: { hard: true, cost: '5 per semitone outside the voice range' },
+  parallel: { hard: true, cost: '45: parallel 5ths/8ves (same perfect interval, both voices moving)' },
+  hidden: { hard: true, cost: '4: similar motion into a 5th/8ve with a leap in this line' },
+  strongDissonance: { hard: true, cost: '30 downbeat, 22 other beats: struck on a strong beat, not a treated form' },
+  heldDissonance: { hard: true, cost: '16: held into a strong beat that another voice makes dissonant, not a suspension or seventh' },
+  unresolved: { hard: true, cost: 'the waived penalty: a treated dissonance (suspension, passing tone, seventh, against a fixed suspension) not resolved' },
+  resolveIntoDissonance: { hard: true, cost: '12: this line\'s treated dissonance resolving onto another dissonance' },
+  chromaticClash: { hard: true, cost: 'clashPenalty (60): two forms of one degree at any tick' },
+  crossing: { hard: true, cost: '24: on the wrong side of a voice with a set relation' },
+  overlap: { hard: true, cost: '0 (hard mode only): moving past the note the neighbouring voice just left' },
+  // Soft: preferences.
+  melodic: { hard: false, cost: 'interval sizes (tritone and 7ths 18-20), leap recovery, runs, repetition' },
+  tendencyTone: { hard: false, cost: '3-10: minor-key leading note / raised 6th not resolving, augmented 2nd' },
+  startCentre: { hard: false, cost: '0.15 per semitone from the range centre for a first note' },
+  weakDissonance: { hard: false, cost: '15-18: a weak-beat dissonance not moving on by step; 2.5 held over a weak beat' },
+  neighbourNote: { hard: false, cost: '2: a weak-beat dissonance turning back (neighbour note)' },
+  chordPull: { hard: false, cost: '5-9 off the skeleton chord on a strong beat; bonuses for its missing tones' },
+  doubling: { hard: false, cost: '4 doubled seventh or leading note, 1 doubled third' },
+  sixFour: { hard: false, cost: '2.5: the fifth of the chord in the bass' },
+  nonTriad: { hard: false, cost: '3-5: 3+ voices on a strong beat that fit no triad (no skeleton)' },
+  againstResolutionShape: { hard: false, cost: '12: dissonant with a fixed voice stepping down from a note held over the beat (shape only; the held note need not be dissonant)' },
+  consonance: { hard: false, cost: 'unison 5, perfect 0.8, imperfect bonus 0.6, contrary-motion bonus 0.4' },
+  spacing: { hard: false, cost: '2: more than a 12th (10th invertible) from a related voice' },
+  target: { hard: false, cost: '0-8: the last note far from the voice\'s next fixed note' },
+} as const satisfies Record<string, { hard: boolean; cost: string }>;
+export type LineRule = keyof typeof LINE_RULES;
+
+/** A hard-mode step with no candidate keeping every hard rule. */
+export interface Relaxation {
+  /** Start tick of the slot. */
+  tick: number;
+  /** The hard rules the chosen candidates break there. */
+  rules: LineRule[];
+}
+
+/** Charges a cost under a rule: a cost, or in hard mode for a hard rule, a recorded violation. */
+type Pay = (rule: LineRule, cost: number) => number;
+const SOFT_PAY: Pay = (_r, c) => c;
+
+const ZERO_REWARDS: DissonanceRewards = { suspension: 0, ornamentedSuspension: 0, retardation: 0, passingTone: 0, chordalSeventh: 0, againstSuspension: 0 };
 
 const IMPERFECT = [false, false, false, true, true, false, false, false, true, true, false, false];
 
@@ -166,6 +226,8 @@ interface BeamNode {
   ob: Obligation | null;
   /** A fixed voice's suspension the line moved against: where it resolves, and the waived penalty. */
   fixedSusp: FixedSusp | null;
+  /** Hard mode: the hard rules this step broke (only on candidates kept by a relaxation). */
+  viol?: LineRule[];
 }
 
 interface FixedSusp {
@@ -176,32 +238,32 @@ interface FixedSusp {
 
 const INTERVAL_COST = [3, 0, 0, 1, 1.2, 2, 18, 3, 5, 5.5, 18, 20, 4];
 
-function melodicCost(prev: number, p: number, node: BeamNode, key: Key): number {
+function melodicCost(prev: number, p: number, node: BeamNode, key: Key, pay: Pay = SOFT_PAY): number {
   const d = p - prev;
   const a = Math.abs(d);
-  let cost = a <= 12 ? INTERVAL_COST[a] : 30;
+  let cost = pay('melodic', a <= 12 ? INTERVAL_COST[a] : 30);
   const rp = mod12(prev - key.tonic);
   const rc = mod12(p - key.tonic);
   if (key.mode === 'minor') {
-    if (rp === 11 && rc !== 0 && d !== 0) cost += 5;
-    if (rp === 9 && rc !== 11 && d !== 0) cost += 4;
-    if (rc === 9 && rp !== 7) cost += 3;
-    if ((rp === 8 && rc === 11) || (rp === 11 && rc === 8)) cost += 10;
-    if (rp === 10 && rc === 0 && d > 0) cost += 3;
+    if (rp === 11 && rc !== 0 && d !== 0) cost += pay('tendencyTone', 5);
+    if (rp === 9 && rc !== 11 && d !== 0) cost += pay('tendencyTone', 4);
+    if (rc === 9 && rp !== 7) cost += pay('tendencyTone', 3);
+    if ((rp === 8 && rc === 11) || (rp === 11 && rc === 8)) cost += pay('tendencyTone', 10);
+    if (rp === 10 && rc === 0 && d > 0) cost += pay('tendencyTone', 3);
   } else if (rp === 11 && rc !== 0 && a > 2) {
-    cost += 2;
+    cost += pay('tendencyTone', 2);
   }
   const li = node.lastInt;
-  if (Math.abs(li) >= 5 && !(a <= 2 && a > 0 && Math.sign(d) === -Math.sign(li))) cost += 3.5;
+  if (Math.abs(li) >= 5 && !(a <= 2 && a > 0 && Math.sign(d) === -Math.sign(li))) cost += pay('melodic', 3.5);
   if (Math.abs(li) >= 3 && a >= 3 && Math.sign(d) === Math.sign(li)) {
-    cost += 3;
-    if (Math.abs(li) + a > 12) cost += 6;
+    cost += pay('melodic', 3);
+    if (Math.abs(li) + a > 12) cost += pay('melodic', 6);
   }
-  if (node.runLen >= 5 && Math.sign(d) === node.runDir) cost += 2;
+  if (node.runLen >= 5 && Math.sign(d) === node.runDir) cost += pay('melodic', 2);
   let seen = 0;
   let n: BeamNode | null = node;
   for (let i = 0; i < 6 && n; i++, n = n.prev) if (n.p === p) seen++;
-  if (seen >= 2) cost += 1.5;
+  if (seen >= 2) cost += pay('melodic', 1.5);
   return cost;
 }
 
@@ -218,8 +280,20 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
   const t1 = noteEnd(slots[slots.length - 1]);
   const grids = contexts.map((voices, i) => buildGrid(voices, spec.relations?.[i], t0, t1));
   const center = (range[0] + range[1]) / 2;
-  const R: DissonanceRewards = { ...DEFAULT_REWARDS, ...spec.rewards };
+  const hard = spec.constraints === 'hard';
+  const R: DissonanceRewards = hard ? ZERO_REWARDS : { ...DEFAULT_REWARDS, ...spec.rewards };
   const CLASH = spec.clashPenalty ?? CHROMATIC_CLASH;
+  // Hard rules broken by the candidate being scored, and what they would have cost (to rank a relaxation).
+  let viol: LineRule[] = [];
+  let violCost = 0;
+  const pay: Pay = hard
+    ? (r, c) => {
+        if (!LINE_RULES[r].hard) return c;
+        viol.push(r);
+        violCost += c;
+        return 0;
+      }
+    : SOFT_PAY;
 
   // Precompute slice ticks per slot and alternative.
   const slices = slots.map((s) =>
@@ -264,14 +338,14 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           else {
             let doubled = false;
             for (const v of g.pitch) if (v[ti] >= 0 && mod12(v[ti]) === pc) doubled = true;
-            if (!doubled) cost -= idx === 1 ? 2.2 : idx === 3 ? 0.4 : 1.4;
-            else if (idx === 3 || pc === mod12(chord.key.tonic + 11)) cost += 4; // doubled seventh / leading note
-            else if (idx === 1) cost += 1;
-            if (idx === 2 && count > 1 && p === lowest) cost += 2.5; // six-four
+            if (!doubled) cost -= pay('chordPull', idx === 1 ? 2.2 : idx === 3 ? 0.4 : 1.4);
+            else if (idx === 3 || pc === mod12(chord.key.tonic + 11)) cost += pay('doubling', 4); // doubled seventh / leading note
+            else if (idx === 1) cost += pay('doubling', 1);
+            if (idx === 2 && count > 1 && p === lowest) cost += pay('sixFour', 2.5); // six-four
           }
         }
         if (count === 1) {
-          cost += outOfChord;
+          cost += pay('chordPull', outOfChord);
           continue;
         }
         /** Treat this voice's strong-beat dissonance as `kind` if it fits the slot's obligation. */
@@ -299,7 +373,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           const suspendable = resolvable && diss && !clash && ic !== 7 && (ic !== 5 || p > o) && oPrev >= 0 && !dissAt(p, oPrev, key);
           if (clash) {
             if (t === s.start) startDiss = true;
-            cost += CLASH;
+            cost += pay('chromaticClash', CLASH);
           } else if (t === s.start) {
             if (diss) {
               startDiss = true;
@@ -316,41 +390,44 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
                   if (res) {
                     cost -= R.againstSuspension;
                     fixedSusp = { ...res, debt: base + R.againstSuspension };
-                  } else cost += base;
+                  } else cost += pay('strongDissonance', base);
                 }
               } else weakDiss = true;
-            } else if (p === o) cost += 5;
-            else if (IMPERFECT[ic]) cost -= 0.6;
-            else cost += 0.8;
+            } else if (p === o) cost += pay('consonance', 5);
+            else if (IMPERFECT[ic]) cost -= pay('consonance', 0.6);
+            else cost += pay('consonance', 0.8);
             if (prevP !== null && ti > 0) {
               const oPrev = g.pitch[vi][ti - 1];
               if (oPrev >= 0 && oPrev !== o && prevP !== p) {
                 const icPrev = Math.abs(prevP - oPrev) % 12;
                 const perfect = ic === 0 || ic === 7;
-                if (perfect && icPrev === ic) cost += 45;
-                else if (perfect && Math.sign(p - prevP) === Math.sign(o - oPrev) && Math.abs(p - prevP) > 2) cost += 4;
-                if (Math.sign(p - prevP) === -Math.sign(o - oPrev)) cost -= 0.4;
+                if (perfect && icPrev === ic) cost += pay('parallel', 45);
+                else if (perfect && Math.sign(p - prevP) === Math.sign(o - oPrev) && Math.abs(p - prevP) > 2) cost += pay('hidden', 4);
+                if (Math.sign(p - prevP) === -Math.sign(o - oPrev)) cost -= pay('consonance', 0.4);
               }
+              // Overlap: past the pitch the neighbouring voice just left. Hard mode only (no soft cost).
+              const rr = g.rel[vi];
+              if (hard && oPrev >= 0 && ((rr === 'below' && p > oPrev) || (rr === 'above' && p < oPrev))) cost += pay('overlap', 0);
             }
           } else if (diss) {
             // held over the beat while this voice moves
             if (!(strong && ((suspendable && treat('suspension', 16)) || (seventh && treat('seventh', 16))))) {
-              cost += strong ? 16 : 2.5;
+              cost += strong ? pay('heldDissonance', 16) : pay('weakDissonance', 2.5);
             }
           }
           // A fixed voice resolving a held-over note down by step here: stay consonant with it.
-          if (diss && g.onset[vi][ti] && fixedResolvesHere(g, vi, ti)) cost += RESOLVE_INTO_DISSONANCE;
+          if (diss && g.onset[vi][ti] && fixedResolvesHere(g, vi, ti)) cost += pay('againstResolutionShape', RESOLVE_INTO_DISSONANCE);
           const r = g.rel[vi];
-          if (r === 'above' && p <= o) cost += 24;
-          if (r === 'below' && p >= o) cost += 24;
-          if (r && Math.abs(p - o) > (spec.invertible ? 16 : 19)) cost += 2;
+          if (r === 'above' && p <= o) cost += pay('crossing', 24);
+          if (r === 'below' && p >= o) cost += pay('crossing', 24);
+          if (r && Math.abs(p - o) > (spec.invertible ? 16 : 19)) cost += pay('spacing', 2);
         }
-        if (!explained) cost += outOfChord;
+        if (!explained) cost += pay('chordPull', outOfChord);
         if (strong && count >= 3 && !chord && !explained) {
           const pcs = new Set<number>([mod12(p)]);
           for (const v of g.pitch) if (v[ti] >= 0) pcs.add(mod12(v[ti]));
           const fits = chords.some((c) => [...pcs].every((x) => c.includes(x)));
-          if (!fits) cost += downbeat ? 5 : 3;
+          if (!fits) cost += pay('nonTriad', downbeat ? 5 : 3);
         }
       }
     }
@@ -424,21 +501,25 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
     const slotEnd = noteEnd(slots[si]);
     const allowed = spec.allowedPcs ?? usablePcs(key);
     const next = new Map<string, BeamNode>();
+    // Hard mode: candidates that broke a hard rule, kept in case none kept them all.
+    const rejected = new Map<string, BeamNode>();
     for (const st of states) {
       const prevP = st.p >= 0 ? st.p : null;
       for (let p = range[0] - 3; p <= range[1] + 3; p++) {
         if (!allowed.includes(mod12(p))) continue;
         if (prevP !== null && Math.abs(p - prevP) > 12) continue;
+        viol = [];
+        violCost = 0;
         let cost = st.cost + rng() * noise;
-        if (p < range[0]) cost += (range[0] - p) * 5;
-        if (p > range[1]) cost += (p - range[1]) * 5;
-        if (prevP === null) cost += Math.abs(p - center) * 0.15;
-        else cost += melodicCost(prevP, p, st, key);
+        if (p < range[0]) cost += pay('range', (range[0] - p) * 5);
+        if (p > range[1]) cost += pay('range', (p - range[1]) * 5);
+        if (prevP === null) cost += pay('startCentre', Math.abs(p - center) * 0.15);
+        else cost += melodicCost(prevP, p, st, key, pay);
         const step = prevP !== null && p !== prevP && Math.abs(p - prevP) <= 2;
         if (st.pending !== null && prevP !== null) {
           const dir = Math.sign(p - prevP);
-          if (!step) cost += 15;
-          else if (st.pending !== 0 && dir !== st.pending) cost += 2; // neighbour note
+          if (!step) cost += pay('weakDissonance', 15);
+          else if (st.pending !== 0 && dir !== st.pending) cost += pay('neighbourNote', 2); // neighbour note
         }
         const h = harmonic(p, prevP, si, key);
         cost += h.cost;
@@ -450,7 +531,7 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           const move = p - prevP;
           const ok = !h.startDiss;
           // Landing the resolution on another dissonance is worse than not resolving.
-          if (h.startDiss) cost += RESOLVE_INTO_DISSONANCE;
+          if (h.startDiss) cost += pay('resolveIntoDissonance', RESOLVE_INTO_DISSONANCE);
           const down = ok && (move === -1 || move === -2);
           if (o.kind === 'suspension') {
             if (down) {
@@ -460,18 +541,18 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
             } else if (si + 1 < slots.length && slots[si + 1].start === slotEnd && slotEnd <= o.tick + ORN_WINDOW) {
               cost += o.n * (R.suspension - R.ornamentedSuspension);
               carried = { ...o, kind: 'ornament', debt: o.debt + o.n * (R.ornamentedSuspension - R.suspension) };
-            } else cost += o.debt;
+            } else cost += pay('unresolved', o.debt);
           } else if (o.kind === 'ornament') {
             const fall = o.from - p;
-            if (!(ok && (fall === 1 || fall === 2))) cost += o.debt;
+            if (!(ok && (fall === 1 || fall === 2))) cost += pay('unresolved', o.debt);
           } else if (o.kind === 'passing') {
-            if (!(ok && Math.sign(move) === o.dir && Math.abs(move) <= 2)) cost += o.debt;
-          } else if (!down) cost += o.debt; // seventh
+            if (!(ok && Math.sign(move) === o.dir && Math.abs(move) <= 2)) cost += pay('unresolved', o.debt);
+          } else if (!down) cost += pay('unresolved', o.debt); // seventh
         }
         // One obligation at a time: a dissonance on the decorating note itself is not treated.
         let ob = h.ob;
         if (carried) {
-          if (ob) cost += ob.debt;
+          if (ob) cost += pay('unresolved', ob.debt);
           ob = carried;
         }
         // Fixed voices' suspensions: charge the waived penalty if this note is
@@ -480,16 +561,16 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
         for (const fs of [st.fixedSusp, h.fixedSusp]) {
           if (!fs) continue;
           if (fs.tick >= slotEnd) {
-            if (fixedSusp) cost += fs.debt; // only one is tracked; don't let the other go unchecked
+            if (fixedSusp) cost += pay('unresolved', fs.debt); // only one is tracked; don't let the other go unchecked
             else fixedSusp = fs;
           }
-          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch, key)) cost += fs.debt + RESOLVE_INTO_DISSONANCE;
+          else if (fs.tick >= slots[si].start && dissAt(p, fs.pitch, key)) cost += pay('unresolved', fs.debt + RESOLVE_INTO_DISSONANCE);
         }
         let pending: number | null = null;
         if (h.weakDiss) {
           if (step) pending = Math.sign(p - prevP!);
           else {
-            cost += prevP === null ? 6 : 18;
+            cost += pay('weakDissonance', prevP === null ? 6 : 18);
             pending = 0;
           }
         }
@@ -507,25 +588,47 @@ export function generateLine(spec: LineSpec, rng: Rng): Note[] {
           fixedSusp,
         };
         const sig = `${p}|${pending}|${Math.sign(d)}|${Math.abs(d) >= 5 ? 1 : 0}|${ob ? `${ob.kind}${ob.from}` : ''}|${fixedSusp ? fixedSusp.tick : ''}`;
+        if (viol.length) {
+          // Ranked by how many hard rules it breaks, then by what they would have cost.
+          node.cost = cost + violCost;
+          node.viol = viol;
+          const old = rejected.get(sig);
+          if (!old || old.viol!.length > viol.length || (old.viol!.length === viol.length && old.cost > node.cost)) rejected.set(sig, node);
+          continue;
+        }
         const old = next.get(sig);
         if (!old || old.cost > cost) next.set(sig, node);
       }
     }
-    states = [...next.values()].sort((a, b) => a.cost - b.cost).slice(0, beam);
+    if (next.size || !rejected.size) states = [...next.values()].sort((a, b) => a.cost - b.cost).slice(0, beam);
+    else {
+      // Dead end: relax this step only, keeping the candidates that break the fewest hard rules.
+      const all = [...rejected.values()];
+      const fewest = Math.min(...all.map((x) => x.viol!.length));
+      states = all.filter((x) => x.viol!.length === fewest).sort((a, b) => a.cost - b.cost).slice(0, beam);
+      spec.relaxations?.push({ tick: slots[si].start, rules: [...new Set(states[0].viol)] });
+    }
   }
 
   let best: BeamNode | null = null;
   let bestCost = Infinity;
+  let bestViol: LineRule[] = [];
   for (const st of states) {
+    viol = [];
+    violCost = 0;
     let c = st.cost;
-    if (st.pending !== null) c += 16;
-    if (st.ob) c += st.ob.debt;
+    if (st.pending !== null) c += pay('weakDissonance', 16);
+    if (st.ob) c += pay('unresolved', st.ob.debt);
     if (spec.targetPitch !== undefined) {
       const a = Math.abs(spec.targetPitch - st.p);
-      c += a > 12 ? 8 : a === 6 || a === 10 || a === 11 ? 6 : a > 7 ? 4 : a > 4 ? 1.5 : 0;
+      c += pay('target', a > 12 ? 8 : a === 6 || a === 10 || a === 11 ? 6 : a > 7 ? 4 : a > 4 ? 1.5 : 0);
     }
-    if (c < bestCost) { bestCost = c; best = st; }
+    // Hard mode: an ending that breaks a hard rule loses to any that doesn't.
+    if (best && viol.length > bestViol.length) continue;
+    c += violCost;
+    if (viol.length < bestViol.length || c < bestCost) { bestCost = c; best = st; bestViol = viol; }
   }
+  if (bestViol.length) spec.relaxations?.push({ tick: slots[slots.length - 1].start, rules: [...new Set(bestViol)] });
   const pitches: number[] = [];
   for (let n = best; n && n.prev; n = n.prev) pitches.push(n.p);
   pitches.reverse();

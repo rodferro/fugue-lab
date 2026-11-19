@@ -378,3 +378,60 @@ that supersedes it, not by editing the old one.
   values between them were not tried. Unexplained dissonances and the
   dissonance rate move without a trend across the values (seed-level noise),
   so they did not enter the choice.
+
+## 2026-11-19 (hard-constraint arm)
+
+- **`settings.constraints: "hard"`** is the first held-out baseline: the same
+  engine with the dissonance rewards at 0 (TEXTURE_REWARDS and
+  `settings.rewards` are ignored) and the textbook rules pruning the beam
+  instead of costing. Beam width, skeleton, answer, entry order, countersubject
+  placement and seeds are unchanged. Default `"soft"` is today's engine: a new
+  snapshot test (28 fixed-seed generations, recorded before the change) and the
+  180 development-split requests give identical output.
+- **One table, `LINE_RULES` in counterpoint.ts**, lists every cost
+  `generateLine` charges and whether it is hard. Hard: range, parallel and
+  hidden 5ths/8ves, untreated strong-beat dissonance (struck, or held into a
+  beat another voice makes dissonant), an unresolved treated dissonance, a
+  treated dissonance resolving onto a dissonance, chromatic clash, crossing,
+  and overlap (new, hard mode only: no soft cost). Soft: interval sizes
+  (including tritone and 7th leaps), minor-key tendency tones (including the
+  augmented 2nd), weak-beat dissonance, neighbour notes, skeleton chord pull,
+  doubling, six-four, non-triadic sonorities, consonance quality, spacing, the
+  first note's register and the line's ending.
+- **Judgement calls.** The 12-point check against a fixed voice stepping down
+  from a note held over the beat (`fixedResolvesHere`) only looks at the shape,
+  not whether the held note was dissonant, so it is a separate soft row
+  (`againstResolutionShape`); our own treated dissonance landing on a
+  dissonance stays hard. Weak-beat dissonance left by leap, melodic tritones and
+  7ths, the augmented 2nd and doubled leading notes are textbook prohibitions in
+  strict species but common in Bach's figuration, and the report does not
+  measure them; they stay soft. Strong-beat dissonance is allowed only in the
+  forms the generator treats (suspension, retardation, ornamented suspension,
+  accented passing tone, chordal seventh, against a fixed suspension), which
+  is stricter than the report (no appoggiaturas, neighbours, escape tones,
+  anticipations or pedals).
+- **Dead ends** relax one step: when no candidate keeps every hard rule, the
+  ones breaking the fewest are kept (ties by cost, with the broken rules
+  priced as in soft mode), and the step is listed in `FugueResult.relaxations`
+  (bar, beat, voice, line, rules); the CLI also gives `hardRelaxations`. An
+  unresolved dissonance relaxes at its resolution step, up to 3 beats after
+  the dissonance.
+- **Measured** (5 seeds; examples = 4 built-in subjects, dev = 36 WTC II and
+  Art of Fugue subjects; per fugue):
+
+  | set | voices | relaxations soft / hard | fugues with one | ms soft / hard |
+  |---|---|---|---|---|
+  | examples | 3 | 0 / 1.05 | 10 of 20 | 30 / 9 |
+  | examples | 4 | 0 / 3.50 | 18 of 20 | 59 / 13 |
+  | dev | 3 | 0 / 0.51 | 29 of 85 | 37 / 13 |
+  | dev | 4 | 0 / 4.61 | 87 of 95 | 109 / 27 |
+
+  Hard mode is 3–4× faster, since pruning keeps the beam small. Most dev
+  relaxations are `unresolved` and `resolveIntoDissonance` (214 and 175 in
+  4 voices) and `crossing` (113); by line, 319 free, 78 countersubject, 41 link
+  in 4 voices. Many countersubject ones are the tonal-head conflict (weakness
+  #4): written against subject and answer at once, it can find no pitch
+  consonant with both, e.g. G and F under invertible counterpoint. Every hard
+  issue in the hard-mode reports lies at a relaxation or between two fixed
+  voices (crossings from the countersubject's octave placement: 148 in 4 voices,
+  untouched by design).

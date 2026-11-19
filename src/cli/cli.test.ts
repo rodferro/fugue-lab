@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EXAMPLES } from '../app/examples';
-import { generateFugue } from '../engine/fugue';
+import { DEFAULT_SETTINGS, generateFugue } from '../engine/fugue';
 import { makeAnswer } from '../engine/answer';
 import { ISSUE_KINDS, voiceLeadingReport } from '../engine/report';
 import { RequestError, answerCommand, generateCommand, reportCommand } from './commands';
@@ -101,4 +101,15 @@ test('settings.clashPenalty overrides the chromatic-clash penalty; 60 is the def
   assert.deepEqual(out({ clashPenalty: 60 }), out({}));
   assert.throws(() => generateCommand({ subject, settings: { clashPenalty: -1 } }), /clashPenalty/);
   assert.throws(() => generateCommand({ subject, settings: { clashPenalty: 'high' } }), /clashPenalty/);
+});
+
+test('settings.constraints: hard mode through the CLI, with hardRelaxations', () => {
+  const soft = json(generateCommand(json({ subject, settings: { voices: 4, seed: 2 } })).json);
+  assert.equal(soft.hardRelaxations, 0);
+  assert.deepEqual(soft.relaxations, []);
+  const hard = json(generateCommand(json({ subject, settings: { voices: 4, seed: 2, constraints: 'hard' } })).json);
+  assert.equal(hard.hardRelaxations, hard.relaxations.length);
+  assert.deepEqual(hard.notes, json(generateFugue(subject, { ...DEFAULT_SETTINGS, voices: 4, seed: 2, constraints: 'hard' })).notes);
+  for (const r of hard.relaxations) assert.ok(Number.isInteger(r.bar) && Number.isInteger(r.beat) && Array.isArray(r.rules));
+  assert.throws(() => generateCommand({ subject, settings: { constraints: 'strict' } }), /constraints/);
 });

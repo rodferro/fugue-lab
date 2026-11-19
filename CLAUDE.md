@@ -83,6 +83,11 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
   docs/decisions.md before changing them. `contexts` holds *alternative* textures the
   line must satisfy at once (the countersubject uses subject + answer);
   `invertible` makes 4ths/5ths count as dissonant.
+- `settings.constraints: 'hard'` (default 'soft') is a baseline: rewards 0, and the
+  rules marked hard in `LINE_RULES` (counterpoint.ts, the one table of every cost)
+  prune the beam. Dead ends relax one step and are listed in `FugueResult.relaxations`
+  (CLI: `hardRelaxations`). Every cost in generateLine goes through `pay(rule, cost)`;
+  a new cost needs a row there. `snapshot.test.ts` pins soft-mode output.
 - 4 voices only: `planHarmony` picks a chord per beat for each entry from the
   fixed voices (entry + countersubject) before the free voices are written;
   `generateLine` gets it as `chordAt` (on-beat pull to chord tones, bonus for

@@ -4,7 +4,7 @@ import { COMMON_TIME, Meter, Note, Role, TPB, TimeGrid, VNote, VOICE_SETS, Voice
 import { Key, KeySpan, dominantOf, sameKey, tonicTriad } from './theory';
 import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
-import { DissonanceRewards, Relation, Slot, complementaryRhythm, generateLine } from './counterpoint';
+import { Constraints, DissonanceRewards, LineRule, Relation, Relaxation, Slot, complementaryRhythm, generateLine } from './counterpoint';
 import { Rng, makeRng } from './rng';
 import { Chord, SkeletonBeat, chordLookup, planHarmony } from './harmony';
 
@@ -54,6 +54,13 @@ export interface FugueSettings {
   rewards?: Partial<DissonanceRewards>;
   /** Overrides the chromatic-clash penalty (CHROMATIC_CLASH, 60 by default); for experiments. */
   clashPenalty?: number;
+  /**
+   * 'soft' (default): today's costs and rewards. 'hard': a baseline where the
+   * rules marked hard in counterpoint.ts LINE_RULES prune the search, and the
+   * dissonance rewards (TEXTURE_REWARDS and `rewards`) are 0. Entries, answer,
+   * skeleton, beam and seeds are the same in both.
+   */
+  constraints?: Constraints;
 }
 
 export const DEFAULT_SETTINGS: FugueSettings = {
@@ -85,6 +92,17 @@ export interface Section {
   start: number;
   end: number;
   label: string;
+}
+
+/** A hard-mode relaxation, placed in the fugue. */
+export interface FugueRelaxation {
+  tick: number;
+  /** 1-based bar and metric beat (dotted quarters in x/8). */
+  bar: number;
+  beat: number;
+  voice: number;
+  role: Role;
+  rules: LineRule[];
 }
 
 export interface FugueResult {
@@ -121,6 +139,8 @@ export interface FugueResult {
    * intervals the way the generator did.
    */
   keys: KeySpan[];
+  /** Hard mode: steps where no candidate kept every hard rule (empty in soft mode). */
+  relaxations: FugueRelaxation[];
 }
 
 function outOfRange(notes: Note[], range: [number, number]): number {
@@ -220,6 +240,12 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
 
   // 2. Countersubject: written once against subject and answer, then placed.
   let cs0: Note[] | null = null;
+  const relaxations: FugueRelaxation[] = [];
+  const place = (r: Relaxation, offset: number, voice: number, role: Role) => {
+    const tick = r.tick + offset;
+    relaxations.push({ tick, bar: Math.floor(tick / bar) + 1, beat: Math.floor((tick % bar) / grid.beat) + 1, voice, role, rules: r.rules });
+  };
+  const csRelax: Relaxation[] = [];
   if (s.countersubject && n >= 2) {
     const mean = Math.round(subject.reduce((a, x) => a + x.pitch, 0) / subject.length);
     const range: [number, number] = [mean + 1, mean + 17];
@@ -235,10 +261,14 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
         clashPenalty: s.clashPenalty,
+        constraints: s.constraints,
+        relaxations: csRelax,
         beam: 160,
       },
       rng,
     );
+    // Written once at the subject's time; placed at its first entry (it recurs with every later one).
+    for (const r of csRelax) place(r, entries[1].start, order[0], 'countersubject');
     for (let k = 1; k < n; k++) {
       const e = entries[k];
       const c = order[k - 1];
@@ -293,6 +323,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
       rel.push(j < v ? 'below' : 'above');
     }
     const sl = slots ?? complementaryRhythm(others, a, b, grid, rng, { endLong: role === 'link' });
+    const lineRelax: Relaxation[] = [];
     const line = generateLine(
       {
         slots: sl,
@@ -307,9 +338,12 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         grid,
         rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
         clashPenalty: s.clashPenalty,
+        constraints: s.constraints,
+        relaxations: lineRelax,
       },
       rng,
     );
+    for (const r of lineRelax) place(r, 0, v, role);
     add(v, line, role);
   };
 
@@ -341,6 +375,11 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
       for (const v of free.slice(0, -1)) {
         const old = notes[v].filter((x) => x.role === 'free' && x.start >= e.start && x.start < e.end);
         notes[v] = notes[v].filter((x) => !old.includes(x));
+        // Its first pass is discarded, and so are that pass's relaxations.
+        for (let i = relaxations.length - 1; i >= 0; i--) {
+          const r = relaxations[i];
+          if (r.voice === v && r.role === 'free' && r.tick >= e.start && r.tick < e.end) relaxations.splice(i, 1);
+        }
         writeLine(v, e.start, e.end, keyAt, 'free', old.map(({ start, dur }) => ({ start, dur })));
       }
     }
@@ -380,5 +419,6 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
     beatsPerBar: grid.bar / grid.ticksPerQuarter,
     harmony,
     keys,
+    relaxations: relaxations.sort((x, y) => x.tick - y.tick || x.voice - y.voice),
   };
 }
