@@ -113,3 +113,18 @@ test('settings.constraints: hard mode through the CLI, with hardRelaxations', ()
   for (const r of hard.relaxations) assert.ok(Number.isInteger(r.bar) && Number.isInteger(r.beat) && Array.isArray(r.rules));
   assert.throws(() => generateCommand({ subject, settings: { constraints: 'strict' } }), /constraints/);
 });
+
+test('settings.targetDissonance through the CLI: the dissonance block, and hard mode rejected', () => {
+  const out = json(generateCommand(json({ subject, settings: { voices: 3, seed: 2, targetDissonance: 0.4 } })).json);
+  assert.deepEqual(Object.keys(out.dissonance).sort(), ['achieved', 'attempts', 'control', 'hit', 'offset', 'reachable', 'scale', 'target', 'tolerance', 'tries']);
+  assert.equal(out.dissonance.target, 0.4);
+  assert.equal(out.dissonance.reachable.length, 2);
+  assert.equal(out.dissonance.control, 'offset');
+  assert.deepEqual(out.notes, json(generateFugue(subject, { ...DEFAULT_SETTINGS, voices: 3, seed: 2, rewardOffset: out.dissonance.offset })).notes);
+  assert.equal(json(generateCommand(json({ subject, settings: { voices: 3, seed: 2 } })).json).dissonance, undefined);
+  assert.throws(() => generateCommand({ subject, settings: { constraints: 'hard', targetDissonance: 0.4 } }), (e: unknown) => e instanceof RequestError && /hard/.test((e as Error).message));
+  assert.throws(() => generateCommand({ subject, settings: { targetDissonance: -1 } }), /targetDissonance/);
+  assert.throws(() => generateCommand({ subject, settings: { targetDissonance: 0.4, targetTries: 0 } }), /targetTries/);
+  assert.throws(() => generateCommand({ subject, settings: { targetDissonance: 0.4, targetControl: 'both' } }), /targetControl/);
+  assert.throws(() => generateCommand({ subject, settings: { rewardScale: 0 } }), /rewardScale/);
+});

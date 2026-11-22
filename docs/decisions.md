@@ -435,3 +435,107 @@ that supersedes it, not by editing the old one.
   issue in the hard-mode reports lies at a relaxation or between two fixed
   voices (crossings from the countersubject's octave placement: 148 in 4 voices,
   untouched by design).
+
+## 2026-11-21 (dissonance-density control)
+
+- **Why:** the held-out test matches Bach's strong-beat dissonance on average
+  but not subject by subject, no subject feature predicts Bach's level, and
+  the level is stable within a fugue. So the level becomes the user's choice,
+  `settings.targetDissonance` (per bar), and the question is whether the engine
+  can hit it per subject without breaking the mix of kinds or the voice leading.
+- **The measure** is `expositionDissonance` (density.ts), used by the search,
+  the tests and the CLI: every DISSONANCE_KINDS issue in the report (the ten
+  treated kinds plus chromatic clash and unexplained), voices cropped at the
+  end of the last entry as fugue-research crops them, the piece's key plan,
+  divided by the bars of that span (fractional).
+- **The search** (`searchDissonance`): x = 0 is the default engine; step
+  outwards until the target is bracketed or the bound is hit, then regula falsi
+  kept 20% inside the bracket. Each try is a full generation with the same
+  seed; the closest attempt is returned with `dissonance: {target, achieved,
+  control, scale, offset, tries, reachable, hit, attempts}`. Tolerance 0.05 and
+  8 tries by default. Rejected in hard mode. Absent: the engine is unchanged
+  (the 28-generation snapshot passes).
+- **Deviation:** `reachable` is the lowest and highest measure among the
+  attempts, not the measure at the lowest and highest factor tried. The
+  measure is not monotone in the factor (each try is a new beam search), and
+  with the literal definition the returned attempt could fall outside the range.
+- **Two controls**, `targetControl`: `"scale"` (default, as specified)
+  multiplies every reward (`rewardScale`); `"offset"` adds the same amount to
+  every reward (`rewardOffset`, also open for experiments). Bounds: scale 1/8 to
+  8 (×4 a step), offset −12 to +12 (4 a step).
+- **Sweep** (44 cases: 36 development-split subjects at seed 1, the 4 examples
+  in 3 and 4 voices; strong-beat dissonance per bar, kind shares of that total):
+
+  | control | 3 v range | 4 v range | 4 v suspension share | 4 v passing | 4 v ornamented |
+  |---|---|---|---|---|---|
+  | scale 1/16 → 1 → 16 | 0.35 – 0.54 – 0.83 | 0.90 – 0.96 – 1.87 | 17% → 53% → 27% | 62% → 15% → 3% | 4% → 18% → 57% |
+  | offset −12 → 0 → +12 | 0.07 – 0.54 – 0.90 | 0.12 – 0.96 – 2.12 | 30% → 53% → 40% | 14% → 15% → 37% | 14% → 18% → 8% |
+
+  The scale breaks the mix. Some rewards are net costs (passing tone −2.2 and
+  retardation −1.2 in 4 voices), and multiplying widens every difference: at
+  high scale ornamented suspensions take over and passing tones vanish, at low
+  scale the reverse. It also has a floor, since scale → 0 leaves the treated
+  forms free, not penalized: in 4 voices it cannot go below the default level.
+  The offset keeps the differences between kinds, so suspensions stay at 30–53%;
+  passing tones grow at positive offsets.
+- **Hits** (targets k × each subject's own default level, 8 tries; strict =
+  within 0.05/bar; half = within max(0.05, half a dissonance)):
+
+  | | 0.5× | 1× | 1.5× | 2× |
+  |---|---|---|---|---|
+  | scale 3 v (21) | 5 / 10 | 21 | 8 / 11 | 5 / 5 |
+  | scale 4 v (23) | 3 / 5 | 23 | 9 / 12 | 6 / 6 |
+  | offset 3 v (21) | 12 / 18 | 21 | 10 / 14 | 6 / 6 |
+  | offset 4 v (23) | 13 / 16 | 23 | 11 / 14 | 5 / 5 |
+
+  Misses have two causes. Out of range: 81 of the scale's 95 misses, 33 of the
+  offset's 77, mostly 2× in 3 voices, where the level saturates near 0.9/bar.
+  Granularity: at the median exposition (15 bars) one dissonance is 0.067/bar,
+  more than the tolerance, and successive tries jump by whole dissonances, often
+  over the target. More tries do not help (12 or 16 tries: the same hits within
+  one or two), so the default stays 8.
+- **Voice leading at the extremes**: unexplained dissonance stays ≤ 0.008/bar
+  except scale ×8–16 in 4 voices (0.03–0.04). Parallels stay at 0–4 per setting in the
+  sweep (44 expositions) and 0–2 per 23 in the hit runs. Crossings rise in 4 voices with low scale (0.14/bar at 0.5×
+  targets against 0.044) and negative offset (0.09–0.14).
+- **Run time**: about 34 ms (3 v) and 94 ms (4 v) per plain generation; a
+  target costs one generation per try, 1 try at the default level and 3–6
+  otherwise: 100–150 ms (3 v) and 300–570 ms (4 v).
+- **Not done: an online term** in the beam (a cost on the running density's
+  distance from the target). It would steer every dissonant choice by the same
+  amount, which is the offset's advantage, in one generation instead of 3–6.
+  But a line cannot count the report's kinds when it chooses (the
+  classification needs the following notes and the voices not yet written), and
+  the lines are written one at a time, so it would steer an approximation per
+  line. It cannot fix the granularity either. Worth trying if the offset search
+  is adopted and its cost matters.
+- **Open, for review**: the offset control fits the research question better
+  (wider range, steadier mix) than the scale that was specified, and is the
+  candidate for the default; a tolerance of half a dissonance (max(0.05,
+  0.5/bars)) would make "hit" mean "as close as the count allows". Neither
+  default was changed.
+
+## 2026-11-22 (density control: offset and half-a-dissonance by default)
+
+- **`targetControl` defaults to `"offset"`** (was `"scale"`, 2026-11-21). It
+  reaches a wider range and keeps the mix of kinds steadier (table there).
+  The fugue-research measurements already use the offset. `"scale"` stays
+  available.
+- **The default tolerance is half a dissonance over the exposition**,
+  max(0.05, 0.5 / bars) per bar (`toleranceFor` in density.ts), so a hit means
+  "as close as the count allows". An explicit `targetTolerance` replaces it, and
+  the tolerance used is in the output (`dissonance.tolerance`). For the research
+  the hit flag matters less than the distance from the target, which is what
+  fugue-research measures.
+- **`reachable`** stays the lowest and highest measure among all attempts.
+- Re-measured with the new defaults (same 44 cases; hits; |achieved − target|
+  median per bar, and in whole dissonances):
+
+  | | 0.5× | 1.5× | 2× |
+  |---|---|---|---|
+  | 3 v (21) | 18 hit; 0.042, 0.5 | 14; 0.056, 0.5 | 6; 0.333, 2 |
+  | 4 v (23) | 16; 0.050, 1 | 14; 0.062, 1 | 5; 0.125, 1 |
+
+  1× is hit every time on the first try. Tries average 3–5 (4.5–5.1 in 4 voices), and
+  run time per targeted generation is 105–135 ms in 3 voices and 525–590 ms in 4
+  (plain: 35 and 98 ms).

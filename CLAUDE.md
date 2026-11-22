@@ -36,6 +36,8 @@ src/engine/            pure TS, no DOM — keep it that way (reusable in a worke
   harmony.ts           planHarmony: chord per beat from the fixed voices (DP), chordLookup
   counterpoint.ts      generateLine (beam search) + complementaryRhythm
   fugue.ts             generateFugue(subject, settings) → FugueResult (exposition planner/renderer)
+  density.ts           expositionDissonance (strong-beat dissonance per bar over the exposition),
+                       searchDissonance (targetDissonance: search on the reward offset/scale)
   report.ts            voiceLeadingReport(voices, opts): parallels, classified strong-beat
                        dissonances, crossings; summarizeReport → counts per bar
   midi.ts              SMF type-1 writer (time signature from the meter; ticksPerQuarter must divide 480)
@@ -88,6 +90,11 @@ index.html             markup; <!--HEAD/BODY-START/END--> markers are used by bu
   prune the beam. Dead ends relax one step and are listed in `FugueResult.relaxations`
   (CLI: `hardRelaxations`). Every cost in generateLine goes through `pay(rule, cost)`;
   a new cost needs a row there. `snapshot.test.ts` pins soft-mode output.
+- `settings.targetDissonance` (per bar) searches a reward offset (or, with
+  `targetControl: 'scale'`, the reward scale) for a generation at that level of
+  `expositionDissonance` (density.ts: the report's strong-beat dissonances over the
+  exposition), within half a dissonance by default; the result carries `dissonance`. `rewardScale` / `rewardOffset` set the
+  control directly. Not allowed in hard mode.
 - 4 voices only: `planHarmony` picks a chord per beat for each entry from the
   fixed voices (entry + countersubject) before the free voices are written;
   `generateLine` gets it as `chordAt` (on-beat pull to chord tones, bonus for

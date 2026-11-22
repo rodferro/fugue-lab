@@ -4,7 +4,8 @@ import { COMMON_TIME, Meter, Note, Role, TPB, TimeGrid, VNote, VOICE_SETS, Voice
 import { Key, KeySpan, dominantOf, sameKey, tonicTriad } from './theory';
 import { SubjectAnalysis, analyzeSubject } from './analyze';
 import { Answer, AnswerType, makeAnswer } from './answer';
-import { Constraints, DissonanceRewards, LineRule, Relation, Relaxation, Slot, complementaryRhythm, generateLine } from './counterpoint';
+import { Constraints, DEFAULT_REWARDS, DissonanceRewards, LineRule, Relation, Relaxation, Slot, complementaryRhythm, generateLine } from './counterpoint';
+import { DissonanceControl, DissonanceControlKind, searchDissonance } from './density';
 import { Rng, makeRng } from './rng';
 import { Chord, SkeletonBeat, chordLookup, planHarmony } from './harmony';
 
@@ -61,6 +62,32 @@ export interface FugueSettings {
    * skeleton, beam and seeds are the same in both.
    */
   constraints?: Constraints;
+  /**
+   * Multiplies every dissonance reward (TEXTURE_REWARDS, then `rewards`) by this
+   * factor, so their ratios stay put; negative rewards (net costs) grow too.
+   * Absent: the rewards as they are. Ignored in hard mode, which has none.
+   */
+  rewardScale?: number;
+  /**
+   * Adds this to every dissonance reward, after rewardScale: shifts treated
+   * dissonance against consonance while keeping the differences between kinds.
+   * Absent: no offset. For experiments.
+   */
+  rewardOffset?: number;
+  /**
+   * Aim for this many strong-beat dissonances per bar over the exposition
+   * (expositionDissonance in density.ts): rewardOffset (or rewardScale, see
+   * targetControl) is searched per request,
+   * each try a full generation with the same seed, and the closest is returned
+   * with FugueResult.dissonance. Not allowed in hard mode.
+   */
+  targetDissonance?: number;
+  /** Stop the search within this many dissonances per bar of the target (default: half a dissonance over the exposition, at least 0.05). */
+  targetTolerance?: number;
+  /** At most this many generations per search (default 8). */
+  targetTries?: number;
+  /** What the search moves: 'offset' (rewardOffset, the default) or 'scale' (rewardScale). */
+  targetControl?: DissonanceControlKind;
 }
 
 export const DEFAULT_SETTINGS: FugueSettings = {
@@ -141,6 +168,8 @@ export interface FugueResult {
   keys: KeySpan[];
   /** Hard mode: steps where no candidate kept every hard rule (empty in soft mode). */
   relaxations: FugueRelaxation[];
+  /** With targetDissonance: the search's outcome (this result is its closest attempt). */
+  dissonance?: DissonanceControl;
 }
 
 function outOfRange(notes: Note[], range: [number, number]): number {
@@ -194,7 +223,24 @@ export function meterOf(settings: Partial<FugueSettings>): Meter {
   return DEFAULT_SETTINGS.meter;
 }
 
+/** The texture's rewards with the user's overrides, scaled by `rewardScale` when given. */
+function rewardsOf(n: number, s: FugueSettings): Partial<DissonanceRewards> {
+  const r = { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards };
+  if (s.rewardScale === undefined && s.rewardOffset === undefined) return r;
+  const k = s.rewardScale ?? 1;
+  const c = s.rewardOffset ?? 0;
+  const full: DissonanceRewards = { ...DEFAULT_REWARDS, ...r };
+  return Object.fromEntries(Object.entries(full).map(([name, v]) => [name, v * k + c])) as unknown as DissonanceRewards;
+}
+
 export function generateFugue(input: Note[], settings: Partial<FugueSettings> = {}): FugueResult {
+  if (settings.targetDissonance !== undefined) {
+    if (settings.constraints === 'hard') throw new Error('targetDissonance needs the dissonance rewards, and hard mode has none');
+    const { targetDissonance, targetTolerance, targetTries, targetControl, ...rest } = settings;
+    const control = targetControl ?? 'offset';
+    const run = (v: number) => generateFugue(input, control === 'scale' ? { ...rest, rewardScale: v } : { ...rest, rewardOffset: v });
+    return searchDissonance(run, targetDissonance, { tolerance: targetTolerance, tries: targetTries, control });
+  }
   const s: FugueSettings = { ...DEFAULT_SETTINGS, ...settings, meter: meterOf(settings) };
   const grid = timeGrid(s.ticksPerQuarter, s.meter);
   const rng: Rng = makeRng(s.seed);
@@ -206,6 +252,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
   const answer = makeAnswer(subject, key, s.answerType, mutation);
   const voices = VOICE_SETS[s.voices];
   const n = voices.length;
+  const rewards = rewardsOf(n, s);
   const order = validOrder(s.entryOrder, n) ? s.entryOrder : defaultOrder(subject, voices);
   const bar = grid.bar;
   const subLen = Math.max(1, lengthOf(subject));
@@ -259,7 +306,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         relations: [['above'], ['above']],
         invertible: true,
         grid,
-        rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
+        rewards,
         clashPenalty: s.clashPenalty,
         constraints: s.constraints,
         relaxations: csRelax,
@@ -336,7 +383,7 @@ export function generateFugue(input: Note[], settings: Partial<FugueSettings> = 
         allowedPcs,
         chordAt: allowedPcs ? undefined : chordAt,
         grid,
-        rewards: { ...TEXTURE_REWARDS[n as 2 | 3 | 4], ...s.rewards },
+        rewards,
         clashPenalty: s.clashPenalty,
         constraints: s.constraints,
         relaxations: lineRelax,

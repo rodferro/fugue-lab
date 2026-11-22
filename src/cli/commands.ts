@@ -86,6 +86,7 @@ function reportOptions(o: Obj): ReportOptions {
  * {subject, settings?, midi?, bpm?, report?: ReportOptions} → the generated exposition plus its report summary.
  * settings.meter is "6/8" or {num, den}; settings.ticksPerQuarter (default 4) is the grid of the subject and the result.
  * settings.constraints "hard" gives the hard-constraint baseline; the output's hardRelaxations counts its dead ends.
+ * settings.targetDissonance (per bar) searches a reward offset (or scale, targetControl) and adds `dissonance` to the output.
  */
 export function generateCommand(req: unknown): CommandResult {
   const r = obj(req, 'request');
@@ -101,6 +102,20 @@ export function generateCommand(req: unknown): CommandResult {
   }
   if (settings.constraints !== undefined && settings.constraints !== 'soft' && settings.constraints !== 'hard') {
     throw new RequestError('settings.constraints must be "soft" or "hard"');
+  }
+  const num = (v: unknown, what: string, ok: (x: number) => boolean, rule: string) => {
+    if (v !== undefined && !(typeof v === 'number' && Number.isFinite(v) && ok(v))) throw new RequestError(`settings.${what} must be ${rule}`);
+  };
+  num(settings.rewardScale, 'rewardScale', (x) => x > 0, 'a number > 0');
+  num(settings.rewardOffset, 'rewardOffset', () => true, 'a number');
+  num(settings.targetDissonance, 'targetDissonance', (x) => x >= 0, 'a number >= 0 (strong-beat dissonances per bar)');
+  num(settings.targetTolerance, 'targetTolerance', (x) => x > 0, 'a number > 0');
+  num(settings.targetTries, 'targetTries', (x) => Number.isInteger(x) && x >= 1, 'an integer >= 1');
+  if (settings.targetControl !== undefined && settings.targetControl !== 'scale' && settings.targetControl !== 'offset') {
+    throw new RequestError('settings.targetControl must be "scale" or "offset"');
+  }
+  if (settings.targetDissonance !== undefined && settings.constraints === 'hard') {
+    throw new RequestError('settings.targetDissonance cannot be used with constraints "hard": hard mode has no dissonance rewards to steer');
   }
   if (settings.ticksPerQuarter !== undefined) {
     const q = int(settings.ticksPerQuarter, 'settings.ticksPerQuarter', 4);
