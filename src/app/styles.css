@@ -180,3 +180,24 @@ button, select, input { font: inherit; color: inherit; }
 }
 kbd { font: 500 11px var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--bg); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ---------- dissonance control ---------- */
+.diss { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 8px; }
+.diss[hidden] { display: none; }
+.diss:disabled { opacity: 0.5; }
+.diss-head { display: flex; justify-content: space-between; align-items: baseline; }
+.diss-head label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
+.diss-head output { font: 600 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+.diss input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.btn.preset { flex-direction: column; gap: 1px; padding: 5px 4px; font-size: 12.5px; height: auto; justify-content: center; }
+.btn.preset .mono { font: 400 11px var(--font-mono); color: var(--muted); }
+.btn.preset[aria-pressed="true"] .mono { color: var(--ink); }
+.diss-status { color: var(--ink); font-variant-numeric: tabular-nums; }
+.diss-status:empty { display: none; }
+.diss-status.out { color: var(--warn); }
+
+/* Busy state: shown only when generation takes long enough to notice. */
+.busy { visibility: hidden; opacity: 0; font-size: 12px; color: var(--muted); margin-right: auto; }
+.card[aria-busy="true"] .busy { visibility: visible; opacity: 1; transition: opacity 0.1s 0.12s; }
+.card[aria-busy="true"] #fugue { opacity: 0.55; transition: opacity 0.15s 0.12s; }

@@ -106,6 +106,29 @@
     </section>
 
     <section class="group">
+      <h2>Counterpoint</h2>
+      <div class="field"><span class="field-label" id="rulesLabel">Rules</span>
+        <div class="seg" role="radiogroup" aria-labelledby="rulesLabel">
+          <label><input type="radio" name="constraints" value="soft" id="rulesSoft"><span>Idiomatic</span></label>
+          <label><input type="radio" name="constraints" value="hard" id="rulesHard"><span>Strict</span></label>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="dissOn">Set the dissonance level</label>
+      <p class="hint" id="dissReason" hidden></p>
+      <fieldset class="diss" id="dissPanel" hidden>
+        <div class="diss-head"><label for="diss">Dissonances per bar</label><output id="dissOut" for="diss"></output></div>
+        <input id="diss" type="range" min="0" max="3" step="0.05" aria-describedby="dissStatus">
+        <div class="presets" role="group" aria-label="Dissonance presets">
+          <button class="btn preset" type="button" data-preset="sparse" aria-pressed="false">Sparse<span class="mono"></span></button>
+          <button class="btn preset" type="button" data-preset="bach" aria-pressed="false" title="Bach's mean, WTC II + Art of Fugue">Bach average<span class="mono"></span></button>
+          <button class="btn preset" type="button" data-preset="dense" aria-pressed="false">Dense<span class="mono"></span></button>
+        </div>
+        <p class="hint diss-status" id="dissStatus" aria-live="polite"></p>
+      </fieldset>
+      <p class="hint">The level counts strong-beat dissonances over the exposition: suspensions, passing tones, sevenths. Strict is the hard-rule baseline, with no dissonance rewards.</p>
+    </section>
+
+    <section class="group">
       <h2>Variation</h2>
       <div class="row2">
         <label class="field"><span>Seed</span><input id="seed" type="number" min="1" step="1" inputmode="numeric"></label>
@@ -133,9 +156,10 @@
       <ul class="warnings" id="warnings" hidden></ul>
     </section>
 
-    <section class="card" aria-labelledby="fugueTitle">
+    <section class="card" id="fugueCard" aria-labelledby="fugueTitle" aria-busy="false">
       <div class="card-head">
         <h2 id="fugueTitle">Exposition</h2>
+        <span class="busy" id="busy" role="status">Generating…</span>
         <p>Click the roll to play from that point · <kbd>Space</kbd> plays or stops</p>
       </div>
       <div id="fugueEmpty" class="empty" hidden>Add at least two notes to the subject to hear the exposition.</div>

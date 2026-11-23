@@ -14,7 +14,7 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const order = [
   'src/engine/model.ts', 'src/engine/rng.ts', 'src/engine/theory.ts', 'src/engine/analyze.ts', 'src/engine/answer.ts',
   'src/engine/harmony.ts', 'src/engine/counterpoint.ts', 'src/engine/fugue.ts', 'src/engine/midi.ts', 'src/engine/report.ts', 'src/engine/density.ts',
-  'src/app/examples.ts', 'src/app/theme.ts', 'src/app/audio.ts', 'src/app/zip.ts', 'src/app/pianoRoll.ts', 'src/app/fugueView.ts', 'src/app/main.ts',
+  'src/app/examples.ts', 'src/app/dissonance.ts', 'src/app/theme.ts', 'src/app/audio.ts', 'src/app/zip.ts', 'src/app/pianoRoll.ts', 'src/app/fugueView.ts', 'src/app/main.ts',
 ];
 let js = '';
 for (const f of order) {

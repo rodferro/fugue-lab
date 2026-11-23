@@ -51,6 +51,8 @@ src/app/               UI
   pianoRoll.ts         subject editor at EDIT_TPQ = 24 per quarter, snap 1/8…1/32 and triplets
                        (default 1/16); monophonic, edited note wins overlaps
   fugueView.ts         read-only multi-voice roll with entry band, mute, seek, hover tip
+  dissonance.ts        the Dissonance control (targetDissonance slider 0–3/bar, presets, status text); pure,
+                       tested in dissonance.test.ts (npm test runs src/app/*.test.ts too)
   audio.ts, theme.ts (canvas colors from CSS vars), zip.ts, examples.ts, styles.css
 index.html             markup; <!--HEAD/BODY-START/END--> markers are used by build-single
 ```

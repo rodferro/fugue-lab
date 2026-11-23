@@ -10,6 +10,10 @@ import { Instrument, Player } from './audio';
 import { EDIT_TPQ, PianoRoll } from './pianoRoll';
 import { FugueView } from './fugueView';
 import { zipFiles } from './zip';
+import {
+  DissonancePreset, DissonanceUi, PRESET_FACTOR, dissonanceAvailability, dissonanceStatus, dissonanceValue, freshDissonance,
+  loadDissonance, presetValue, requestSettings,
+} from './dissonance';
 
 interface AppState {
   /** In ticks of settings.ticksPerQuarter, which is always EDIT_TPQ once loaded. */
@@ -22,7 +26,9 @@ interface AppState {
   bpm: number;
   instrument: Instrument;
   ghost: boolean;
+  /** Stored settings never hold targetDissonance; requestSettings adds it per generation. */
   settings: FugueSettings;
+  dissonance: DissonanceUi;
 }
 
 const STORE = 'fugue-lab-v1';
@@ -62,10 +68,12 @@ const fresh = (): AppState => ({
   instrument: 'harpsichord',
   ghost: true,
   settings: { ...DEFAULT_SETTINGS, ticksPerQuarter: EDIT_TPQ },
+  dissonance: freshDissonance(DEFAULT_SETTINGS.voices),
 });
 
 const state: AppState = { ...fresh(), ...(load() ?? {}) };
 state.settings = { ...DEFAULT_SETTINGS, ...state.settings, ticksPerQuarter: EDIT_TPQ };
+state.dissonance = loadDissonance(state.dissonance, state.settings.voices);
 /** The editor's grid: EDIT_TPQ in the current meter. */
 const editGrid = () => timeGrid(EDIT_TPQ, state.settings.meter);
 
@@ -140,15 +148,49 @@ function syncForm(): void {
   $('bpmOut').textContent = String(state.bpm);
   ($('instrument') as HTMLSelectElement).value = state.instrument;
   ($('ghost') as HTMLInputElement).checked = state.ghost;
+  syncDissonance();
+}
+
+/** The Dissonance control: availability, slider, presets. The status line is set by regenerate. */
+function syncDissonance(): void {
+  const s = state.settings;
+  const d = state.dissonance;
+  setSegment('constraints', s.constraints ?? 'soft');
+  const avail = dissonanceAvailability(s);
+  const on = $('dissOn') as HTMLInputElement;
+  on.checked = d.on;
+  on.disabled = !avail.enabled;
+  $('dissReason').textContent = avail.reason;
+  $('dissReason').hidden = avail.enabled;
+  const panel = $('dissPanel') as HTMLFieldSetElement;
+  panel.hidden = !d.on;
+  panel.disabled = !avail.enabled;
+  const v = dissonanceValue(d, s.voices);
+  d.value = v;
+  ($('diss') as HTMLInputElement).value = String(v);
+  $('dissOut').textContent = v.toFixed(2);
+  document.querySelectorAll<HTMLButtonElement>('.preset').forEach((b) => {
+    const p = b.dataset.preset as DissonancePreset;
+    b.setAttribute('aria-pressed', String(d.preset === p));
+    b.querySelector('.mono')!.textContent = presetValue(p, s.voices).toFixed(2);
+  });
 }
 
 fillSelect($('example'), [['', 'Load an example…'], ...EXAMPLES.map((e) => [e.id, e.name] as [string, string])], '');
 
 // ---------- generation ----------
 let timer = 0;
-function schedule(): void {
+let pending = 0;
+function setBusy(busy: boolean): void { $('fugueCard').setAttribute('aria-busy', String(busy)); }
+/**
+ * Generation runs on the main thread (a targeted 4-voice one takes ~0.5 s), so
+ * mark the exposition busy and let that paint before the work starts.
+ */
+function schedule(delay = 90): void {
+  const id = ++pending;
   window.clearTimeout(timer);
-  timer = window.setTimeout(regenerate, 90);
+  setBusy(true);
+  timer = window.setTimeout(() => requestAnimationFrame(() => window.setTimeout(() => { if (id === pending) regenerate(); }, 0)), delay);
 }
 
 function chip(label: string, value: string, tone = ''): HTMLElement {
@@ -164,6 +206,18 @@ function chip(label: string, value: string, tone = ''): HTMLElement {
 }
 
 function regenerate(): void {
+  ++pending;
+  try { generate(); } finally { setBusy(false); }
+}
+
+function showDissonance(r: FugueResult | null): void {
+  const el = $('dissStatus');
+  const st = r?.dissonance ? dissonanceStatus(r.dissonance) : null;
+  el.textContent = st?.text ?? '';
+  el.classList.toggle('out', st ? !st.reached : false);
+}
+
+function generate(): void {
   save(state);
   const s = state.settings;
   roll.bars = state.bars;
@@ -188,6 +242,7 @@ function regenerate(): void {
     roll.ghost = [];
     roll.resize();
     chips.replaceChildren(chip('Key', keyName(analysis.key)));
+    showDissonance(null);
     $('fugueEmpty').hidden = false;
     $('fugueBody').hidden = true;
     buildOrderSelect(null);
@@ -197,8 +252,9 @@ function regenerate(): void {
   // 16th-grid subject, as before): same notes, less work.
   const q = coarsestTicksPerQuarter(state.subject, EDIT_TPQ);
   const t0 = performance.now();
-  result = generateFugue(rescaleNotes(state.subject, EDIT_TPQ, q), { ...s, ticksPerQuarter: q });
+  result = generateFugue(rescaleNotes(state.subject, EDIT_TPQ, q), requestSettings({ ...s, ticksPerQuarter: q }, state.dissonance));
   const ms = performance.now() - t0;
+  showDissonance(result);
   buildOrderSelect(s.entryOrder ? null : result.order);
   roll.ghost = state.ghost ? rescaleNotes(result.answer.notes, q, EDIT_TPQ) : [];
   roll.resize();
@@ -317,7 +373,14 @@ async function exportMidi(): Promise<void> {
     // Published artifact: hosts only accept whitelisted types, so wrap in a zip.
     const downloads = (await host.use('downloads')) as Downloads | null;
     if (!downloads) { toast('Saving files is not available in this view.'); return; }
-    const json = new TextEncoder().encode(JSON.stringify({ subject: state.subject, settings: state.settings }, null, 2));
+    // The settings as sent (with targetDissonance when the control is on), so the CLI can rerun them.
+    const { attempts: _attempts, ...outcome } = result.dissonance ?? { attempts: [] };
+    const json = new TextEncoder().encode(JSON.stringify({
+      subject: state.subject,
+      settings: requestSettings(state.settings, state.dissonance),
+      dissonanceControl: state.dissonance,
+      ...(result.dissonance ? { dissonance: outcome } : {}),
+    }, null, 2));
     try {
       await downloads.save({ filename: 'fugue.zip', data: zipFiles([{ name: 'fugue.mid', data: midi }, { name: 'fugue-settings.json', data: json }]) });
       toast('Saved fugue.zip (MIDI inside).');
@@ -389,7 +452,26 @@ on('cadence', 'change', (e) => { settings().cadence = (e.target as HTMLInputElem
 on('picardy', 'change', (e) => { settings().picardy = (e.target as HTMLInputElement).checked; schedule(); });
 on('codetta', 'change', (e) => { settings().codettaBars = Number((e.target as HTMLSelectElement).value); schedule(); });
 on('seed', 'change', (e) => { settings().seed = Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1)); syncForm(); schedule(); });
-on('reroll', 'click', () => { settings().seed = 1 + Math.floor(Math.random() * 9999); syncForm(); regenerate(); });
+on('reroll', 'click', () => { settings().seed = 1 + Math.floor(Math.random() * 9999); syncForm(); schedule(0); });
+document.querySelectorAll<HTMLInputElement>('input[name="constraints"]').forEach((r) =>
+  r.addEventListener('change', () => { settings().constraints = r.value as 'soft' | 'hard'; syncDissonance(); schedule(); }));
+on('dissOn', 'change', (e) => { state.dissonance.on = (e.target as HTMLInputElement).checked; syncDissonance(); schedule(); });
+// Dragging only moves the readout; the (slow) generation runs on release or key press.
+on('diss', 'input', (e) => { $('dissOut').textContent = Number((e.target as HTMLInputElement).value).toFixed(2); });
+on('diss', 'change', (e) => {
+  state.dissonance.value = Number((e.target as HTMLInputElement).value);
+  state.dissonance.preset = null;
+  syncDissonance();
+  schedule(0);
+});
+document.querySelectorAll<HTMLButtonElement>('.preset').forEach((b) =>
+  b.addEventListener('click', () => {
+    const p = b.dataset.preset as DissonancePreset;
+    if (!(p in PRESET_FACTOR)) return;
+    state.dissonance.preset = p;
+    syncDissonance();
+    schedule(0);
+  }));
 on('bpm', 'input', (e) => { state.bpm = Number((e.target as HTMLInputElement).value); $('bpmOut').textContent = String(state.bpm); save(state); });
 on('instrument', 'change', (e) => { state.instrument = (e.target as HTMLSelectElement).value as Instrument; save(state); });
 on('ghost', 'change', (e) => { state.ghost = (e.target as HTMLInputElement).checked; schedule(); });
